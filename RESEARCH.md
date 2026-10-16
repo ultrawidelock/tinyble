@@ -332,3 +332,7 @@ address). Commissioning succeeded on 1M PHY.
 
 Still open for M0: the unmodified `build/dwm-m0` image and the 10-run
 success rate.
+
+After the trace, tinyble put those six behaviours behind macros, off by
+default (README.md): 2,735 B flash and 81 B RAM, against 3,115 B and 85 B with
+all on (measured 2026-10-16).
