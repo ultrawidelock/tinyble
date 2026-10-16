@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: Apache-2.0
+
+config TINYBLE
+	bool "tinyble: minimal BLE peripheral host over raw HCI"
+	depends on BT_HCI_RAW
+
+config TINYBLE_MATTER_GATT
+	bool "Matter commissioning GATT table"
+	depends on TINYBLE
+	default y
