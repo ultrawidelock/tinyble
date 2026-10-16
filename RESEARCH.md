@@ -262,3 +262,20 @@ python3 measure/mapsize.py <build>/zephyr/zephyr.map 'subsys/bluetooth/host' 'so
 ```
 
 Pass absolute paths to `EXTRA_CONF_FILE`; west runs from the NCS workspace.
+
+## 7. Phase 1 corrections (2026-10-16)
+
+Found while building M0's capture image and tinyble. Each is from the NCS
+v3.3.0 source or the door-lock build's `.config`; none is from a trace yet.
+
+| Phase 0 said | Found | Source |
+|---|---|---|
+| Row 4: DLE 251 B, Zephyr sends LE Set Data Length | The door-lock build runs `CONFIG_BT_CTLR_DATA_LENGTH_MAX=27`: `BT_BUF_ACL_RX_SIZE=255` fails the `<= 251` default and drops it to 27. Zephyr sends LE Set Data Length only on `bt_drv_quirk_no_auto_dle()`, which NCS's driver does not set | `<NCS>/zephyr/subsys/bluetooth/controller/Kconfig:611-617`; `<NCS>/zephyr/subsys/bluetooth/host/conn.c:1840-1853` |
+| Row 5: L2CAP Connection Parameter Update Request | Zephyr uses HCI LE Connection Update when both sides support the LL procedure (an iPhone does, inferred) and falls back to L2CAP on 0x1A. It reads remote features first | `conn.c:2129-2166`, `:1805-1813`; `hci_core.c:2052-2064` |
+| Row 6: server MTU 247 B | 251 B in this build (`BT_L2CAP_RX_MTU` is `BT_BUF_ACL_RX_SIZE` minus 4 B), inferred | `.config` |
+| Row 18: refuse LE credit based requests with LE_PSM not supported | Without `BT_L2CAP_DYNAMIC_CHANNEL` Zephyr answers them with Command Reject, not understood | `l2cap.c:2305-2388` |
+| `tinymatter/` | Renamed tinytalk (commit cd964ea) | tinytalk git log |
+| M0 image | Building the door-lock with `trace/monitor.conf` adds 688 B flash and 8,192 B RAM: 309,972 B and 110,176 B (measured) | `build/dwm-m0.log` |
+
+tinyble (README.md) measured 3,119 B flash and 85 B RAM on 2026-10-16 against
+the 4,760 B and 379 B estimated in section 6.
