@@ -279,3 +279,27 @@ v3.3.0 source or the door-lock build's `.config`; none is from a trace yet.
 
 tinyble (README.md) measured 3,119 B flash and 85 B RAM on 2026-10-16 against
 the 4,760 B and 379 B estimated in section 6.
+
+### Controller trims (measured 2026-10-16)
+
+`hci_uart` on `nrf52833dk/nrf52833` with `hci-periph.conf`, `sdc-periph.conf`
+and `hci-min-pools.conf`, one option changed per build. Section 4's builds
+also ran at `DATA_LENGTH_MAX=27`, the same trap as the door-lock: its
+43,725 B and 4,678 B are for 27 B buffers.
+
+| Change | Flash | RAM | Note |
+|---|---:|---:|---|
+| Baseline | 84,196 B | 15,144 B | DLE 27 B, SDC 3 TX and 2 RX buffers |
+| `BT_CTLR_PHY_2M=n` | -1,104 B | 0 | iPhone stays on 1M PHY |
+| `BT_CTLR_LE_PING=n` | -224 B | 0 | LE Ping only runs on an encrypted link |
+| `BT_CTLR_CHAN_SEL_2=n`, `BT_CTLR_ASSERT_DEBUG=n` | 0 | 0 | Zephyr link layer options; the SDC ignores them |
+| Privacy, filter accept list, connection RSSI off | -1,392 B | 0 | Already off in the door-lock. Derived: all five off gave -2,720 B, minus the rows above |
+| `dle251.conf` (real DLE 251 B) | 0 | +1,080 B | All in the controller's memory pool |
+| `dle251.conf` plus `sdc-buf1.conf` | 0 | +312 B | One SDC TX and RX buffer; whether it keeps up is an M2 question |
+
+`ctlr-lean.conf` holds the first two. Against the M2 plan (DLE 251 B at the
+default 3 and 2 buffers) the trims save 1,328 B flash (sum of the single builds) and 768 B RAM.
+
+```
+west build -p always -b nrf52833dk/nrf52833 -d build/o-<x> <NCS>/zephyr/samples/bluetooth/hci_uart -- "-DEXTRA_CONF_FILE=measure/hci-periph.conf;measure/sdc-periph.conf;measure/hci-min-pools.conf;<the change>"
+```
