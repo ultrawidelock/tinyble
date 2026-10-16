@@ -75,7 +75,9 @@ static struct {
 	uint8_t adv_on;        /* what the controller is doing */
 	uint8_t adv_len;
 	uint8_t ident;         /* last signaling identifier we used */
+#if TB_SIG_REJECT
 	uint8_t rej_ident;
+#endif
 	uint8_t ind;           /* indication: 1 owed, 2 awaiting confirmation */
 	uint8_t disc_reason;
 	uint16_t conn;
@@ -88,7 +90,10 @@ static struct {
 	uint16_t ind_h, ind_len;
 	const uint8_t *adv;
 	const uint8_t *ind_data;
-	uint32_t cpur_at, ind_at;
+	uint32_t cpur_at;
+#if TB_ATT_TIMEOUT
+	uint32_t ind_at;
+#endif
 	uint8_t u[16];         /* type UUID, or the Find By Type Value value */
 	uint8_t addr[7];       /* [6]: an address was given */
 	uint8_t ccc[4][2];     /* per CCC slot, little endian */
@@ -437,6 +442,7 @@ static void att(const uint8_t *p, uint16_t n)
 		}
 		range(p);
 		break;
+#if TB_FIND_BY_TYPE
 	case 0x06: /* Find By Type Value: primary services only, as Zephyr */
 		if (n < 7u) {
 			goto invalid;
@@ -448,6 +454,7 @@ static void att(const uint8_t *p, uint16_t n)
 			s.err = E_NOT_FOUND;
 		}
 		break;
+#endif
 	case 0x08: /* Read By Type */
 	case 0x10: /* Read By Group Type */
 		if (n != 7u && n != 21u) {
@@ -461,7 +468,9 @@ static void att(const uint8_t *p, uint16_t n)
 		}
 		break;
 	case 0x0A: /* Read */
+#if TB_READ_BLOB
 	case 0x0C: /* Read Blob */
+#endif
 		if (n < (op == 0x0Au ? 3u : 5u)) {
 			goto invalid;
 		}
@@ -506,7 +515,8 @@ static unsigned int att_reply(uint8_t *q)
 	const uint8_t *v;
 	uint8_t t16[2];
 	unsigned int h, last, pos, vl, hdr, il = 0, any = 0, m = s.mtu, op = s.op;
-	unsigned int grp = op == 0x06u || op == 0x10u;
+	unsigned int fbtv = TB_FIND_BY_TYPE && op == 0x06u;
+	unsigned int grp = fbtv || op == 0x10u;
 
 	if (s.err) {
 		goto err;
@@ -520,7 +530,9 @@ static unsigned int att_reply(uint8_t *q)
 		q[0] = 0x13;
 		return 1;
 	case 0x0A:
+#if TB_READ_BLOB
 	case 0x0C:
+#endif
 		if (s.h - 1u >= tb_n_attrs) {
 			s.err = E_INVALID_HANDLE;
 			goto err;
@@ -530,16 +542,19 @@ static unsigned int att_reply(uint8_t *q)
 			goto err;
 		}
 		vl = value(s.h, &v);
+#if TB_READ_BLOB
 		if (s.end > vl) {
 			s.err = E_INVALID_OFFSET;
 			goto err;
 		}
 		vl -= s.end;
+		v += s.end;
+#endif
 		if (vl > m - 1u) {
 			vl = m - 1u;
 		}
 		q[0] = (uint8_t)(op + 1u);
-		memcpy(q + 1, v + s.end, vl);
+		memcpy(q + 1, v, vl);
 		return vl + 1u;
 	default:
 		break;
@@ -547,7 +562,7 @@ static unsigned int att_reply(uint8_t *q)
 
 	last = s.end < tb_n_attrs ? s.end : tb_n_attrs;
 	hdr = grp ? 4u : 2u;
-	pos = op == 0x06u ? 1u : 2u;
+	pos = fbtv ? 1u : 2u;
 	for (h = s.h; h <= last; h++) {
 		const struct tb_attr *a = attr((uint16_t)h);
 
@@ -557,13 +572,14 @@ static unsigned int att_reply(uint8_t *q)
 			vl = a->type ? 2u : 16u;
 			put16(t16, a->type);
 			v = a->type ? t16 : uuid128((uint16_t)h);
-		} else if (op == 0x06u) { /* a primary service with this UUID */
+		} else if (fbtv) { /* a primary service with this UUID */
 			if (a->type != 0x2800u || (a->fl & TB_A_LEN) != s.ulen ||
 			    memcmp(tb_vals + a->off, s.u, s.ulen)) {
 				continue;
 			}
 		} else if (s.ulen == 2u ? (!a->type || a->type != get16(s.u))
-					: (a->type || memcmp(uuid128((uint16_t)h), s.u, 16))) {
+					: (!TB_TYPE128 || a->type ||
+					   memcmp(uuid128((uint16_t)h), s.u, 16))) {
 			continue;
 		} else if (!(a->fl & TB_A_R)) { /* services always read */
 			if (!any) {
@@ -597,7 +613,7 @@ static unsigned int att_reply(uint8_t *q)
 		goto err;
 	}
 	q[0] = (uint8_t)(op + 1u);
-	if (op != 0x06u) { /* Find By Type Value has no format or length byte */
+	if (!fbtv) { /* Find By Type Value has no format or length byte */
 		q[1] = (uint8_t)(op == 0x04u ? (il == 4u ? 1u : 2u) : il);
 	}
 	return pos;
@@ -631,16 +647,20 @@ static void acl(const uint8_t *p, uint16_t n)
 		 * Update Response and a Command Reject (no dynamic channels) and
 		 * rejects every other code as not understood, the LE credit based
 		 * request included. */
+#if TB_SIG_REJECT
 		if (n >= 4u && p[1] && get16(p + 2) == n - 4u && p[0] != 0x13u && p[0] != 0x01u) {
 			s.rej_ident = p[1];
 			s.pdus |= BIT(P_REJ);
 		}
+#endif
+#if TB_SMP_REFUSE
 	} else if (cid == CID_SMP) {
 		/* No pairing: answer anything but Pairing Failed with Pairing
 		 * Failed, Pairing Not Supported (Core Vol 3 Part H 3.3). */
 		if (n && p[0] != 0x05u) {
 			s.pdus |= BIT(P_SMP);
 		}
+#endif
 	} else {
 		tb_rx_dropped++;
 	}
@@ -671,12 +691,15 @@ static void pump(void)
 		case P_ATT:
 			n = (uint16_t)att_reply(q);
 			break;
+#if TB_SMP_REFUSE
 		case P_SMP:
 			cid = CID_SMP;
 			q[0] = 0x05;
 			q[1] = 0x05;
 			n = 2;
 			break;
+#endif
+#if TB_SIG_REJECT
 		case P_REJ: /* Command Reject, command not understood */
 			cid = CID_SIG;
 			memset(q, 0, 6);
@@ -685,6 +708,7 @@ static void pump(void)
 			q[2] = 2;
 			n = 6;
 			break;
+#endif
 		case P_CPUR:
 			cid = CID_SIG;
 			if (!++s.ident) {
@@ -705,7 +729,9 @@ static void pump(void)
 			memcpy(q + 3, s.ind_data, s.ind_len);
 			n = (uint16_t)(3u + s.ind_len);
 			s.ind = 2;
+#if TB_ATT_TIMEOUT
 			s.ind_at = tb_port_ms() + ATT_TIMEOUT_MS;
+#endif
 			break;
 		}
 		put16(b, s.conn); /* PB 00: first, not automatically flushable */
@@ -759,6 +785,7 @@ uint32_t tb_poll(void)
 
 	enter();
 	now = tb_port_ms();
+#if TB_ATT_TIMEOUT
 	if (s.ind == 2u) {
 		d = s.ind_at - now;
 		if ((int32_t)d <= 0) {
@@ -771,6 +798,7 @@ uint32_t tb_poll(void)
 			next = d;
 		}
 	}
+#endif
 	if (s.pdus & BIT(P_CPUR)) {
 		d = s.cpur_at - now;
 		if ((int32_t)d > 0 && d < next) {

@@ -25,21 +25,35 @@ ARM_FLAGS := -std=c11 -Os -mcpu=cortex-m4 -mthumb -mabi=aapcs -ffunction-section
 SIZE_FLASH_MAX := 5291
 SIZE_RAM_MAX := 760
 
+# Every optional behaviour on (tinyble.h); the tests run both ways.
+FULL := -DTB_FIND_BY_TYPE=1 -DTB_READ_BLOB=1 -DTB_TYPE128=1 -DTB_SIG_REJECT=1 \
+	-DTB_SMP_REFUSE=1 -DTB_ATT_TIMEOUT=1
+
 .PHONY: test asan size clean
 
 $(BUILD)/test: $(SRCS) $(TESTS) $(HDRS)
 	@mkdir -p $(@D)
 	$(CC) $(CSTD) $(WARN) $(INCS) $(SRCS) $(TESTS) -o $@
 
+$(BUILD)/test_full: $(SRCS) $(TESTS) $(HDRS)
+	@mkdir -p $(@D)
+	$(CC) $(CSTD) $(WARN) $(FULL) $(INCS) $(SRCS) $(TESTS) -o $@
+
 $(BUILD)/test_asan: $(SRCS) $(TESTS) $(HDRS)
 	@mkdir -p $(@D)
 	$(CC) $(CSTD) $(WARN) $(SAN) $(INCS) $(SRCS) $(TESTS) -o $@
 
-test: $(BUILD)/test
-	$(BUILD)/test
+$(BUILD)/test_asan_full: $(SRCS) $(TESTS) $(HDRS)
+	@mkdir -p $(@D)
+	$(CC) $(CSTD) $(WARN) $(SAN) $(FULL) $(INCS) $(SRCS) $(TESTS) -o $@
 
-asan: $(BUILD)/test_asan
+test: $(BUILD)/test $(BUILD)/test_full
+	$(BUILD)/test
+	$(BUILD)/test_full
+
+asan: $(BUILD)/test_asan $(BUILD)/test_asan_full
 	$(BUILD)/test_asan
+	$(BUILD)/test_asan_full
 
 # text + data is flash, data + bss is RAM, summed over tinyble's objects.
 size: $(SRCS) $(HDRS)

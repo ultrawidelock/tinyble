@@ -422,6 +422,7 @@ static void test_discovery(void)
 	ATT_IN("04 1200 ffff");
 	ATT_OUT("01 04 1200 0a");
 
+#if TB_FIND_BY_TYPE
 	/* Find By Type Value: the 0xFFF6 service and its group end. */
 	ATT_IN("06 0100 ffff 0028 f6ff");
 	ATT_OUT("07 0c00 1100");
@@ -431,6 +432,10 @@ static void test_discovery(void)
 	ATT_OUT("01 06 0100 0a");
 	ATT_IN("06 0100 ffff 0328 f6ff");
 	ATT_OUT("01 06 0100 0a");
+#else
+	ATT_IN("06 0100 ffff 0028 f6ff");
+	ATT_OUT("01 06 0000 06");
+#endif
 
 	/* GAP values. */
 	ATT_IN("0a 0700");
@@ -441,10 +446,15 @@ static void test_discovery(void)
 	ATT_OUT("0b 0c001800 0000c800");
 	ATT_IN("08 0100 ffff 002a"); /* Device Name by type */
 	ATT_OUT("09 0a 0700 74696e7974616c6b");
+#if TB_READ_BLOB
 	ATT_IN("0c 0700 0400");
 	ATT_OUT("0d 74616c6b");
 	ATT_IN("0c 0700 0800");
 	ATT_OUT("0d");
+#else
+	ATT_IN("0c 0700 0400");
+	ATT_OUT("01 0c 0000 06");
+#endif
 	EXPECT_NONE();
 }
 
@@ -479,8 +489,10 @@ static void test_errors(void)
 	ATT_OUT("01 0a 0000 01");
 	ATT_IN("0a 07");
 	ATT_OUT("01 0a 0000 04");
+#if TB_READ_BLOB
 	ATT_IN("0c 0700 0900");
 	ATT_OUT("01 0c 0700 07");
+#endif
 	ATT_IN("12 0700 41");
 	ATT_OUT("01 12 0700 03");
 	ATT_IN("12 2000 41");
@@ -506,7 +518,7 @@ static void test_errors(void)
 	ATT_IN("04 0000 0500");
 	ATT_OUT("01 04 0000 01");
 	ATT_IN("08 0100 ffff 119d9f429c4f9f9559453d26f52eee18"); /* C1 value by type */
-	ATT_OUT("01 08 0100 02");
+	ATT_OUT(TB_TYPE128 ? "01 08 0100 02" : "01 08 0100 0a");
 	ATT_IN("08 0100 ffff 0429");
 	ATT_OUT("01 08 0100 0a");
 	/* Commands and stray confirmations get nothing. */
@@ -607,10 +619,14 @@ static void test_credits(void)
 	EXPECT_NONE();
 	nocp(1);
 	ATT_OUT("0b 74696e7974616c6b");
+#if TB_SMP_REFUSE
 	nocp(1);
 	EXPECT(TB_HCI_ACL, frame(0x0006, "05 05"));
+#endif
+#if TB_SIG_REJECT
 	nocp(1);
 	SIG_OUT("01 05 0200 0000");
+#endif
 	EXPECT_NONE();
 
 	/* A request while a reply is still owed is dropped. */
@@ -659,14 +675,18 @@ static void test_l2cap_smp(void)
 	l2(0x0005, "13 01 0200 0000"); /* accepted */
 	l2(0x0005, "01 07 0200 0000"); /* a reject of something */
 	l2(0x0005, "12 02 0800 0c00 1800 0000 c800"); /* a central asking us */
+#if TB_SIG_REJECT
 	SIG_OUT("01 02 0200 0000");
+#endif
 	l2(0x0005, "14 00 0a00 8000 4000 f700 f700 0100"); /* identifier 0 */
 	l2(0x0005, "14 03 0b00 8000 4000 f700 f700 0100"); /* length wrong */
 	l2(0x0005, "14");
 	EXPECT_NONE();
 
 	l2(0x0006, "01 03 00 01 10 07 07");
+#if TB_SMP_REFUSE
 	EXPECT(TB_HCI_ACL, frame(0x0006, "05 05"));
+#endif
 	l2(0x0006, "05 05");
 	l2(0x0006, "");
 	l2(0x0007, "00");
@@ -730,6 +750,7 @@ static void test_disconnects(void)
 	tb_disconnect(0x13); /* no link: nothing */
 	EXPECT_NONE();
 
+#if TB_ATT_TIMEOUT
 	/* ATT timeout: 30 s without a confirmation. */
 	ready_link();
 	g_inds = 0;
@@ -743,6 +764,20 @@ static void test_disconnects(void)
 	(void)tb_poll();
 	CHECK(g_inds == 1 && g_ind_err == TB_ETIMEDOUT);
 	EXPECT(TB_HCI_CMD, "060403 0100 13");
+#else
+	/* No ATT timeout: the indication waits for its confirmation. */
+	ready_link();
+	g_inds = 0;
+	CHECK(tb_indicate(TB_MATTER_H_C2, k_hs, 3) == 0);
+	ATT_OUT("1d 1000 656c04");
+	g_now += 60000;
+	CHECK(tb_poll() == UINT32_MAX);
+	SIG_OUT("12 01 0800 0c00 1800 0000 c800"); /* came due meanwhile */
+	EXPECT_NONE();
+	CHECK(g_inds == 0);
+	ATT_IN("1e");
+	CHECK(g_inds == 1 && g_ind_err == 0);
+#endif
 	g_now = 1000;
 }
 

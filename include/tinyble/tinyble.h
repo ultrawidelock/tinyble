@@ -26,6 +26,27 @@
 extern "C" {
 #endif
 
+/* Optional behaviour, Zephyr's, off by default: none of it appeared in an
+ * Apple Home commissioning (RESEARCH.md). Define one to 1 to restore it. */
+#ifndef TB_FIND_BY_TYPE
+#define TB_FIND_BY_TYPE 0 /* Find By Type Value; off: Request Not Supported */
+#endif
+#ifndef TB_READ_BLOB
+#define TB_READ_BLOB 0 /* Read Blob; off: Request Not Supported */
+#endif
+#ifndef TB_TYPE128
+#define TB_TYPE128 0 /* Read By Type on a 128-bit type; off: Attribute Not Found */
+#endif
+#ifndef TB_SIG_REJECT
+#define TB_SIG_REJECT 0 /* Command Reject for unknown signaling; off: ignored */
+#endif
+#ifndef TB_SMP_REFUSE
+#define TB_SMP_REFUSE 0 /* Pairing Failed to any SMP PDU; off: counted as dropped */
+#endif
+#ifndef TB_ATT_TIMEOUT
+#define TB_ATT_TIMEOUT 0 /* 30 s indication timeout; off: wait for the link */
+#endif
+
 /* Error returns. The values are Zephyr's errno numbers, so a Zephyr adapter
  * can pass them through. */
 #define TB_EIO        (-5)
@@ -79,7 +100,8 @@ void tb_init(const uint8_t *addr);
 void tb_hci_rx(uint8_t type, const uint8_t *pkt, uint16_t len);
 
 /**
- * Run timers: the connection parameter request and the 30 s ATT timeout.
+ * Run timers: the connection parameter request and, with TB_ATT_TIMEOUT, the
+ * 30 s ATT timeout.
  * @return milliseconds until it needs calling again, UINT32_MAX for never.
  * Calling it early or often is harmless.
  */
@@ -131,7 +153,8 @@ uint8_t tb_on_write(uint16_t handle, const uint8_t *data, uint16_t len);
  *  after the Write Response is handed to the controller, so an indication
  *  sent from here cannot overtake it. */
 void tb_on_ccc(uint16_t handle, uint16_t value);
-/** The outstanding indication was confirmed (0), timed out, or the link fell. */
+/** The outstanding indication was confirmed (0), timed out (TB_ATT_TIMEOUT),
+ *  or the link fell. */
 void tb_on_indicated(int err);
 /** The link went down with HCI reason @p reason. */
 void tb_on_disconnect(uint8_t reason);
