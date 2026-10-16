@@ -34,7 +34,7 @@
 
 #define NO_CONN        0xFFFFu
 #define MTU_MIN        23u
-#define MTU_MAX        247u /* 251 B L2CAP PDU: one LL PDU at DLE 251 */
+#define MTU_MAX        247u /* 251 B L2CAP PDU */
 #define ATT_TIMEOUT_MS 30000u
 
 #define CID_ATT 0x0004u
@@ -52,16 +52,20 @@
 #define E_INVALID_LEN    0x0Du
 #define E_UNSUPP_GROUP   0x10u
 
-/* HCI commands owed, sent lowest bit first, one at a time. Bits 0 to 5 are
+/* HCI commands owed, sent lowest bit first, one at a time. Bits 0 to 4 are
  * the init sequence. */
-enum { C_EVT_MASK, C_LE_EVT_MASK, C_LE_BUF, C_DLE, C_RAND_ADDR, C_ADV_PARAMS, C_ADV_DATA,
-       C_ADV_EN, C_DISC };
+enum { C_EVT_MASK, C_LE_EVT_MASK, C_LE_BUF, C_RAND_ADDR, C_ADV_PARAMS, C_ADV_DATA, C_ADV_EN,
+       C_DISC };
 /* ACL PDUs owed, sent lowest bit first while the controller has buffers. */
 enum { P_ATT, P_SMP, P_REJ, P_CPUR, P_IND };
 
 #define BIT(n) (1u << (n))
 
 uint8_t tb_rx_dropped;
+
+/* One L2CAP PDU each way, header included: the inbound one being reassembled,
+ * the outbound one being split into the controller's ACL length. */
+static uint8_t rx_pdu[4u + MTU_MAX], tx_pdu[4u + MTU_MAX];
 
 /* Bytes first, then halfwords, then words: Thumb's short loads reach offsets
  * 0 to 31, 62 and 124 B respectively. */
@@ -82,7 +86,10 @@ static struct {
 	uint8_t disc_reason;
 	uint16_t conn;
 	uint16_t cmds;         /* C_* bits */
-	uint16_t mtu, mtu_max;
+	uint16_t mtu;
+	uint16_t acl;          /* controller's ACL length, at most one PDU */
+	uint16_t rx_len;       /* bytes of rx_pdu so far */
+	uint16_t tx_len, tx_off; /* tx_pdu's length and how much has gone */
 	uint16_t h;            /* start handle, or the handle */
 	uint16_t end;          /* end handle, or the Read Blob offset */
 	uint16_t ccc_h;        /* value handle whose CCC this reply's write changed */
@@ -148,9 +155,9 @@ static void leave(void)
 
 /* ---- HCI commands --------------------------------------------------------- */
 
-static const uint16_t k_op[] = {0x0C01u, 0x2001u, 0x2002u, 0x2024u, 0x2005u,
+static const uint16_t k_op[] = {0x0C01u, 0x2001u, 0x2002u, 0x2005u,
 				 0x2006u, 0x2008u, 0x200Au, 0x0406u};
-static const uint8_t k_plen[] = {8, 8, 0, 4, 6, 15, 32, 1, 3};
+static const uint8_t k_plen[] = {8, 8, 0, 6, 15, 32, 1, 3};
 
 static void cmd(void)
 {
@@ -184,12 +191,6 @@ static void cmd(void)
 		break;
 	case C_LE_EVT_MASK: /* LE Connection Complete */
 		p[0] = 0x01;
-		break;
-	case C_DLE: /* suggested data length: the ACL length, at its 1M time.
-		     * Zephyr sends it too; the controller then starts the update,
-		     * so the peer's PDUs arrive whole. */
-		put16(p, (uint16_t)(s.mtu_max + 4u));
-		put16(p + 2, (uint16_t)((s.mtu_max + 4u + 14u) * 8u));
 		break;
 	case C_RAND_ADDR:
 		memcpy(p, s.addr, 6);
@@ -231,15 +232,12 @@ static void cmd_complete(uint16_t op, uint8_t status, const uint8_t *ret, uint8_
 		return;
 	}
 	if (op == 0x2002u && !status && rlen >= 3u) {
-		m = (uint16_t)(get16(ret) - 4u);
-		s.mtu_max = m > MTU_MAX ? MTU_MAX : m;
+		m = get16(ret);
+		s.acl = m > 4u + MTU_MAX ? 4u + MTU_MAX : m;
 		s.credits = s.credits_max = ret[2];
-		if (get16(ret) < MTU_MIN + 4u || !ret[2]) {
+		if (m < MTU_MIN + 4u || !ret[2]) {
 			status = 0xFFu;
 		}
-	}
-	if (op == 0x2024u) { /* without it the link stays at 27 B */
-		status = 0;
 	}
 	if (status) {
 		s.state = 2;
@@ -269,6 +267,8 @@ static void link_down(uint8_t reason)
 	s.conn = NO_CONN;
 	s.pdus = 0;
 	s.ccc_h = 0;
+	s.rx_len = 0;
+	s.tx_len = s.tx_off = 0;
 	/* The controller frees a dead link's buffers without telling us. */
 	s.credits = s.credits_max;
 	s.cmds = (uint16_t)((s.cmds & ~BIT(C_DISC)) | BIT(C_ADV_EN));
@@ -443,7 +443,7 @@ static void att(const uint8_t *p, uint16_t n)
 			goto invalid;
 		}
 		m = get16(p + 1);
-		s.mtu = m < s.mtu_max ? m : s.mtu_max;
+		s.mtu = m < MTU_MAX ? m : MTU_MAX;
 		break;
 	case 0x04: /* Find Information */
 		if (n < 5u) {
@@ -533,7 +533,7 @@ static unsigned int att_reply(uint8_t *q)
 	switch (op) {
 	case 0x02:
 		q[0] = 0x03;
-		put16(q + 1, s.mtu_max);
+		put16(q + 1, MTU_MAX);
 		return 3;
 	case 0x12:
 		q[0] = 0x13;
@@ -636,19 +636,38 @@ err:
 
 /* ---- L2CAP ---------------------------------------------------------------- */
 
+/* A PDU starts with PB 00 or 10 and continues with PB 01; a new start drops
+ * an unfinished one. */
 static void acl(const uint8_t *p, uint16_t n)
 {
 	uint16_t cid;
 
-	/* One whole PDU, on our link: PB 00 or 10, ACL and L2CAP lengths exact. */
-	if (n < 8u || (get16(p) & 0x1FFFu) != (s.conn & 0x0FFFu) || get16(p + 2) != n - 4u ||
-	    get16(p + 4) != n - 8u) {
-		tb_rx_dropped++;
+	if (n < 4u || (get16(p) & 0x0FFFu) != s.conn || get16(p + 2) != n - 4u) {
+		goto drop;
+	}
+	if (!(p[1] & 0x10u)) {
+		s.rx_len = 0;
+	} else if (!s.rx_len) {
+		goto drop;
+	}
+	n = (uint16_t)(n - 4u);
+	if (s.rx_len + n > sizeof(rx_pdu)) {
+		s.rx_len = 0;
+		goto drop;
+	}
+	memcpy(rx_pdu + s.rx_len, p + 4, n);
+	s.rx_len = (uint16_t)(s.rx_len + n);
+	if (s.rx_len < 4u || s.rx_len < 4u + get16(rx_pdu)) {
 		return;
 	}
-	cid = get16(p + 6);
-	p += 8;
-	n = (uint16_t)(n - 8u);
+	n = get16(rx_pdu);
+	if (s.rx_len != 4u + n) {
+		s.rx_len = 0;
+		goto drop;
+	}
+	s.rx_len = 0;
+	cid = get16(rx_pdu + 2);
+	p = rx_pdu + 4;
 	if (cid == CID_ATT) {
 		att(p, n);
 	} else if (cid == CID_SIG) {
@@ -671,86 +690,100 @@ static void acl(const uint8_t *p, uint16_t n)
 		}
 #endif
 	} else {
-		tb_rx_dropped++;
+		goto drop;
 	}
+	return;
+drop:
+	tb_rx_dropped++;
 }
 
 static void pump(void)
 {
-	uint8_t *b, *q, k, owed;
+	uint8_t *b, *q = tx_pdu + 4, k, owed;
 	uint16_t n, cid;
 
 	cmd();
 	while (s.credits && s.conn != NO_CONN) {
-		owed = (uint8_t)(s.pdus | (s.ind == 1u ? BIT(P_IND) : 0u));
-		if ((owed & BIT(P_CPUR)) && (int32_t)(tb_port_ms() - s.cpur_at) < 0) {
-			owed &= (uint8_t)~BIT(P_CPUR);
+		if (s.tx_off == s.tx_len) {
+			owed = (uint8_t)(s.pdus | (s.ind == 1u ? BIT(P_IND) : 0u));
+			if ((owed & BIT(P_CPUR)) && (int32_t)(tb_port_ms() - s.cpur_at) < 0) {
+				owed &= (uint8_t)~BIT(P_CPUR);
+			}
+			if (!owed) {
+				return;
+			}
+			k = lowest(owed);
+			cid = CID_ATT;
+			switch (k) {
+			case P_ATT:
+				n = (uint16_t)att_reply(q);
+				break;
+#if TB_SMP_REFUSE
+			case P_SMP:
+				cid = CID_SMP;
+				q[0] = 0x05;
+				q[1] = 0x05;
+				n = 2;
+				break;
+#endif
+#if TB_SIG_REJECT
+			case P_REJ: /* Command Reject, command not understood */
+				cid = CID_SIG;
+				memset(q, 0, 6);
+				q[0] = 0x01;
+				q[1] = s.rej_ident;
+				q[2] = 2;
+				n = 6;
+				break;
+#endif
+			case P_CPUR:
+				cid = CID_SIG;
+				if (!++s.ident) {
+					s.ident = 1;
+				}
+				q[0] = 0x12;
+				q[1] = s.ident;
+				put16(q + 2, 8);
+				put16(q + 4, CONN_MIN);
+				put16(q + 6, CONN_MAX);
+				put16(q + 8, CONN_LAT);
+				put16(q + 10, CONN_TO);
+				n = 12;
+				break;
+			default: /* P_IND */
+				q[0] = 0x1D;
+				put16(q + 1, s.ind_h);
+				memcpy(q + 3, s.ind_data, s.ind_len);
+				n = (uint16_t)(3u + s.ind_len);
+				s.ind = 2;
+#if TB_ATT_TIMEOUT
+				s.ind_at = tb_port_ms() + ATT_TIMEOUT_MS;
+#endif
+				break;
+			}
+			put16(tx_pdu, n);
+			put16(tx_pdu + 2, cid);
+			s.tx_len = (uint16_t)(n + 4u);
+			s.tx_off = 0;
+			s.pdus &= (uint8_t)~BIT(k);
 		}
-		if (!owed) {
-			return;
-		}
-		b = tb_port_tx_alloc(TB_HCI_ACL, (uint16_t)(8u + s.mtu_max));
+		b = tb_port_tx_alloc(TB_HCI_ACL, (uint16_t)(4u + s.acl));
 		if (!b) {
 			return;
 		}
-		k = lowest(owed);
-		q = b + 8;
-		cid = CID_ATT;
-		switch (k) {
-		case P_ATT:
-			n = (uint16_t)att_reply(q);
-			break;
-#if TB_SMP_REFUSE
-		case P_SMP:
-			cid = CID_SMP;
-			q[0] = 0x05;
-			q[1] = 0x05;
-			n = 2;
-			break;
-#endif
-#if TB_SIG_REJECT
-		case P_REJ: /* Command Reject, command not understood */
-			cid = CID_SIG;
-			memset(q, 0, 6);
-			q[0] = 0x01;
-			q[1] = s.rej_ident;
-			q[2] = 2;
-			n = 6;
-			break;
-#endif
-		case P_CPUR:
-			cid = CID_SIG;
-			if (!++s.ident) {
-				s.ident = 1;
-			}
-			q[0] = 0x12;
-			q[1] = s.ident;
-			put16(q + 2, 8);
-			put16(q + 4, CONN_MIN);
-			put16(q + 6, CONN_MAX);
-			put16(q + 8, CONN_LAT);
-			put16(q + 10, CONN_TO);
-			n = 12;
-			break;
-		default: /* P_IND */
-			q[0] = 0x1D;
-			put16(q + 1, s.ind_h);
-			memcpy(q + 3, s.ind_data, s.ind_len);
-			n = (uint16_t)(3u + s.ind_len);
-			s.ind = 2;
-#if TB_ATT_TIMEOUT
-			s.ind_at = tb_port_ms() + ATT_TIMEOUT_MS;
-#endif
-			break;
+		n = (uint16_t)(s.tx_len - s.tx_off);
+		if (n > s.acl) {
+			n = s.acl;
 		}
-		put16(b, s.conn); /* PB 00: first, not automatically flushable */
-		put16(b + 2, (uint16_t)(n + 4u));
-		put16(b + 4, n);
-		put16(b + 6, cid);
-		s.pdus &= (uint8_t)~BIT(k);
+		/* PB 00 first, not automatically flushable; PB 01 continuing. */
+		put16(b, (uint16_t)(s.conn | (s.tx_off ? 0x1000u : 0u)));
+		put16(b + 2, n);
+		memcpy(b + 4, tx_pdu + s.tx_off, n);
+		s.tx_off = (uint16_t)(s.tx_off + n);
 		s.credits--;
-		tb_port_tx_send(b, (uint16_t)(n + 8u));
-		if (k == P_ATT && s.ccc_h) {
+		tb_port_tx_send(b, (uint16_t)(n + 4u));
+		/* Once the Write Response has gone; it fits one packet. */
+		if (s.ccc_h && !(s.pdus & BIT(P_ATT))) {
 			n = s.ccc_h;
 			s.ccc_h = 0;
 			tb_on_ccc(n, s.ccc_v);
@@ -767,7 +800,7 @@ void tb_init(const uint8_t *addr)
 	s.conn = NO_CONN;
 	s.ncmd = 1;
 	s.mtu = MTU_MIN;
-	s.cmds = BIT(C_EVT_MASK) | BIT(C_LE_EVT_MASK) | BIT(C_LE_BUF) | BIT(C_DLE) | BIT(C_ADV_PARAMS);
+	s.cmds = BIT(C_EVT_MASK) | BIT(C_LE_EVT_MASK) | BIT(C_LE_BUF) | BIT(C_ADV_PARAMS);
 	if (addr) {
 		memcpy(s.addr, addr, 6);
 		s.addr[6] = 1;

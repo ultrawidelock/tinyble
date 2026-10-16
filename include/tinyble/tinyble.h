@@ -8,13 +8,11 @@
  *
  * Size is the design goal, so the rules are strict:
  *
- * - One ACL packet carries one whole L2CAP PDU, both ways. Outbound this is
- *   guaranteed: the ATT MTU is capped to the controller's ACL length minus the
- *   4 B L2CAP header. Inbound, a PDU split across ACL packets is dropped and
- *   counted in tb_rx_dropped; after the data length update the peer has no
- *   reason to split, and every PDU before it is under 27 B.
- * - Nothing is queued. Owed packets are a bitmask, built into the port's buffer
- *   when the controller has a free ACL buffer.
+ * - One L2CAP PDU each way at a time, up to the 247 B ATT MTU: inbound ones are
+ *   reassembled from ACL packets, outbound ones split into the controller's
+ *   ACL length, so any data length works, 27 B included.
+ * - Nothing is queued. Owed packets are a bitmask, each built when the one
+ *   before it has gone, and sent while the controller has free ACL buffers.
  * - No threads and no locks: every tb_* call and every hook runs in one
  *   context. The port serializes.
  */
@@ -129,7 +127,7 @@ uint16_t tb_mtu(void);
 /** Drop the link with HCI reason @p reason (0x13: remote user terminated). */
 void tb_disconnect(uint8_t reason);
 
-/** Inbound ACL packets dropped: not ours, fragmented, or malformed. */
+/** Inbound ACL packets dropped: not ours, out of order, too long, or malformed. */
 extern uint8_t tb_rx_dropped;
 
 /* ---- port: provided by the platform ---------------------------------------- */

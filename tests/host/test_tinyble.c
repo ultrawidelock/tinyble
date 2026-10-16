@@ -284,14 +284,6 @@ static const uint8_t k_addr[6] = {0x11, 0x22, 0x33, 0x44, 0x55, 0xC6};
 static const uint8_t k_ad[] = {0x02, 0x01, 0x06, 0x0B, 0x16, 0xF6, 0xFF, 0x00,
 			       0x00, 0x0F, 0xF1, 0xFF, 0x01, 0x80, 0x00};
 
-static const char *cmd_hex(const char *hdr, const char *params)
-{
-	static char out[200];
-
-	snprintf(out, sizeof(out), "%s%s", hdr, params);
-	return out;
-}
-
 static void up(unsigned int acl_len, unsigned int credits)
 {
 	char ret[16];
@@ -306,11 +298,6 @@ static void up(unsigned int acl_len, unsigned int credits)
 	EXPECT(TB_HCI_CMD, "022000");
 	snprintf(ret, sizeof(ret), "%02x%02x%02x", acl_len & 0xFF, acl_len >> 8, credits);
 	cc(0x2002, ret);
-	acl_len = acl_len > 251 ? 251 : acl_len;
-	snprintf(ret, sizeof(ret), "%02x%02x%02x%02x", acl_len & 0xFF, acl_len >> 8,
-		 ((acl_len + 14) * 8) & 0xFF, ((acl_len + 14) * 8) >> 8);
-	EXPECT(TB_HCI_CMD, cmd_hex("242004", ret));
-	cc(0x2024, "");
 	EXPECT(TB_HCI_CMD, "052006 1122334455c6");
 	cc(0x2005, "");
 	EXPECT(TB_HCI_CMD, "06200f a000 f000 00 01 00 000000000000 07 00");
@@ -378,8 +365,6 @@ static void test_init_and_adv(void)
 	cc(0x2001, "");
 	EXPECT(TB_HCI_CMD, "022000");
 	cc(0x2002, "1b0002");
-	EXPECT(TB_HCI_CMD, "242004 1b00 4801"); /* 27 B at 328 us */
-	rx(TB_HCI_EVT, "0e04 01 2420 01"); /* no DLE support: carry on */
 	EXPECT(TB_HCI_CMD, "06200f a000 f000 00 00 00 000000000000 07 00");
 	cc(0x2006, "");
 	CHECK(g_ready == 0);
@@ -718,13 +703,13 @@ static void test_l2cap_smp(void)
 
 static void test_acl_drops(void)
 {
+	uint8_t b[31] = {0x01, 0x10, 27, 0};
+
 	up(251, 3);
 	connect();
 	tb_rx_dropped = 0;
-	/* Continuation fragment. */
+	/* Continuation without a start. */
 	rx(TB_HCI_ACL, "0110 0300 0a0700");
-	/* L2CAP length beyond the packet: a split PDU's first part. */
-	rx(TB_HCI_ACL, "0120 0700 0500 0400 0a0700");
 	/* ACL length wrong. */
 	rx(TB_HCI_ACL, "0120 0800 0300 0400 0a0700");
 	/* Another handle. */
@@ -732,10 +717,35 @@ static void test_acl_drops(void)
 	/* Unknown CID. */
 	rx(TB_HCI_ACL, "0120 0500 0100 4000 00");
 	rx(TB_HCI_ACL, "01");
+	CHECK(tb_rx_dropped == 5);
+	/* Longer than the MTU: dropped when it overflows, and what follows has
+	 * no start. */
+	rx(TB_HCI_ACL, "0120 0400 ff00 0400");
+	for (int i = 0; i < 10; i++) {
+		tb_hci_rx(TB_HCI_ACL, b, sizeof(b));
+	}
 	CHECK(tb_rx_dropped == 6);
+	tb_hci_rx(TB_HCI_ACL, b, sizeof(b));
+	CHECK(tb_rx_dropped == 7);
+	/* More than the L2CAP length. */
+	rx(TB_HCI_ACL, "0120 0400 0100 0400");
+	rx(TB_HCI_ACL, "0110 0200 0a07");
+	CHECK(tb_rx_dropped == 8);
+	EXPECT_NONE();
+	/* Split anywhere, the L2CAP header included. */
+	rx(TB_HCI_ACL, "0120 0200 0300");
+	rx(TB_HCI_ACL, "0110 0300 0400 0a");
+	EXPECT_NONE();
+	rx(TB_HCI_ACL, "0110 0200 0700");
+	ATT_OUT("0b 74696e7974616c6b");
+	/* A new start drops an unfinished PDU. */
+	rx(TB_HCI_ACL, "0120 0500 0300 0400 0a");
+	rx(TB_HCI_ACL, "0120 0700 0300 0400 0a0700");
+	ATT_OUT("0b 74696e7974616c6b");
 	/* PB 00 is a start too. */
 	rx(TB_HCI_ACL, "0100 0700 0300 0400 0a0700");
 	ATT_OUT("0b 74696e7974616c6b");
+	CHECK(tb_rx_dropped == 8);
 	EXPECT_NONE();
 }
 
@@ -796,14 +806,97 @@ static void test_disconnects(void)
 	g_now = 1000;
 }
 
+/* Pop ACL packets until one whole PDU is in @p pdu; checks each header. */
+static size_t pop_pdu(uint8_t *pdu, unsigned int acl_len)
+{
+	size_t got = 0, want = 4;
+
+	while (got < want && g_head != g_tail) {
+		const uint8_t *p = g_log[g_head % LOG_MAX].b;
+		uint16_t len = g_log[g_head % LOG_MAX].len;
+
+		CHECK_QUIET(g_log[g_head % LOG_MAX].type == TB_HCI_ACL);
+		CHECK_QUIET(p[0] == 0x01 && p[1] == (got ? 0x10 : 0x00));
+		CHECK_QUIET(p[2] + 4 == len && p[3] == 0 && len - 4 <= acl_len);
+		memcpy(pdu + got, p + 4, len - 4u);
+		got += len - 4u;
+		if (got >= 4) {
+			want = 4u + (pdu[0] | (pdu[1] << 8));
+		}
+		g_head++;
+	}
+	CHECK(got == want);
+	return got;
+}
+
 static void test_small_controller(void)
 {
-	/* 27 B controller buffers: MTU 23 whatever the peer offers. */
+	static uint8_t big[244];
+	uint8_t pdu[260], frag[31];
+	size_t n;
+
+	/* 27 B controller buffers, 2 of them: the MTU is still 247. */
+	g_auto_nocp = 0;
+	g_writes = 0;
 	up(27, 2);
 	connect();
 	ATT_IN("02 0502");
-	ATT_OUT("03 1700");
-	CHECK(tb_mtu() == 23);
+	ATT_OUT("03 f700");
+	nocp(1);
+	ATT_IN("12 1100 0200");
+	ATT_OUT("13");
+	nocp(1);
+	CHECK(tb_mtu() == 247);
+
+	/* A 251 B indication goes out as 9 packets of 27 B and one of 8, two
+	 * at a time; a CCC write meanwhile is answered after the whole PDU,
+	 * and announced after its answer. */
+	for (size_t i = 0; i < sizeof(big); i++) {
+		big[i] = (uint8_t)i;
+	}
+	CHECK(tb_indicate(TB_MATTER_H_C2, big, sizeof(big)) == 0);
+	CHECK(g_tail - g_head == 2);
+	g_cccs = 0;
+	ATT_IN("12 0400 0200");
+	for (int i = 0; i < 4; i++) {
+		nocp(2);
+	}
+	CHECK(g_tail - g_head == 10 && g_cccs == 0);
+	n = pop_pdu(pdu, 27);
+	CHECK(n == 251 && pdu[0] == 247 && pdu[2] == 4 && pdu[4] == 0x1D && pdu[5] == 0x10 &&
+	      !memcmp(pdu + 7, big, sizeof(big)));
+	EXPECT_NONE();
+	nocp(2);
+	CHECK(g_cccs == 1 && g_ccc_h == 0x0003 && g_ccc_seen_rsp);
+	ATT_OUT("13");
+	nocp(1);
+	ATT_IN("1e");
+
+	/* A 185 B Write Request arrives in 27 B pieces. */
+	frag[0] = 0x01;
+	frag[1] = 0x20;
+	frag[3] = 0;
+	pdu[0] = 185;
+	pdu[1] = 0;
+	pdu[2] = 4;
+	pdu[3] = 0;
+	pdu[4] = 0x12;
+	pdu[5] = TB_MATTER_H_C1;
+	pdu[6] = 0;
+	memcpy(pdu + 7, big, 182);
+	for (n = 0; n < 189; n += 27) {
+		size_t k = 189 - n < 27 ? 189 - n : 27;
+
+		frag[2] = (uint8_t)k;
+		memcpy(frag + 4, pdu + n, k);
+		tb_hci_rx(TB_HCI_ACL, frag, (uint16_t)(4 + k));
+		frag[1] = 0x10;
+	}
+	CHECK(g_writes == 1 && g_write_len == 182 && !memcmp(g_write_data, big, 182));
+	ATT_OUT("13");
+	nocp(1);
+	EXPECT_NONE();
+	g_auto_nocp = 1;
 }
 
 /* Random ACL and events: no crash, no oversized or malformed packet out. */
@@ -838,6 +931,13 @@ static void test_random(void)
 			b[7] = 0;
 			if (cid == 4u && n) {
 				b[8] = (uint8_t)("\x02\x04\x06\x08\x0a\x0c\x10\x12\x52\x1e"[(x >> 20) % 10u]);
+			}
+			/* Some continuations, some L2CAP lengths spanning packets. */
+			if ((x >> 24) % 4u == 0) {
+				b[1] = 0x10;
+			}
+			if ((x >> 26) % 4u == 0) {
+				b[4] = (uint8_t)(x >> 3);
 			}
 			tb_hci_rx(TB_HCI_ACL, b, (uint16_t)(n + 8u));
 		}
