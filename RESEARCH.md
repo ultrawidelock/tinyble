@@ -351,7 +351,8 @@ the Zephyr host does: the SDC sources and headers do not say it starts the
 data length update without one. Not yet run on hardware.
 
 Later the same day `samples/m2` took the five raw-HCI controller lines from
-"M3 build": 80,756 B flash, RAM unchanged.
+"M3 build": 80,756 B flash, RAM unchanged; with flow control off and the
+driver log at warning level, 79,808 B and 15,976 B.
 
 ### M3 build (2026-10-16)
 
@@ -363,7 +364,7 @@ gate. Compared with tinytalk's own door-lock at the same commit plus
 
 | Build | tinyble flash (B) | tinyble RAM (B) | Zephyr host flash (B) | Zephyr host RAM (B) |
 |---|---:|---:|---:|---:|
-| LTO | 274,484 | 88,992 | 297,648 | 97,184 |
+| LTO | 273,900 | 88,808 | 297,648 | 97,184 |
 | no LTO | 303,968 | 89,056 | 330,368 | 97,248 |
 
 - Raw HCI changes controller defaults. tinytalk's prj.conf sets
@@ -374,7 +375,13 @@ gate. Compared with tinytalk's own door-lock at the same commit plus
   either way (`nrf/subsys/bluetooth/controller/hci_driver.c`). In tinytalk's
   build `BT_PHY_UPDATE=n` also hides `BT_CTLR_PHY_2M`, so ctlr-lean.conf only
   took LE Ping off there.
-- The one controller difference left is DLE 251 B: SDC library and driver
+- Raw HCI also defaults `BT_HCI_ACL_FLOW_CONTROL=y` (controller-to-host
+  flow control, `zephyr/subsys/bluetooth/Kconfig`), which tinyble never
+  enables, and logs the SDC driver at info level. Off, and at warning level
+  as in tinytalk's build: -512 B flash and -184 B RAM, then -72 B flash (LTO).
+  The LTO row above includes both; the no-LTO rows and the figures below
+  predate them.
+- The other controller difference is DLE 251 B: SDC library and driver
   39,912 B and 5,794 B RAM against 37,665 B and 4,678 B. tinyble needs it,
   since it drops an L2CAP PDU split across ACL packets; reassembly instead
   is a design change.

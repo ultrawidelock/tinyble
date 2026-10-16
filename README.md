@@ -64,7 +64,7 @@ measured 2026-10-16:
 | hci_raw.c and its pools | 582 | 1,263 |
 | net_buf | 568 | 0 |
 | **host side** | **4,146** | **1,372** |
-| whole image (SDC, MPSL, kernel) | 80,756 | 16,224 |
+| whole image (SDC, MPSL, kernel) | 79,808 | 15,976 |
 
 ```
 west build -b decawave_dwm3001cdk -d build/m2-dwm samples/m2
@@ -88,14 +88,16 @@ locks never nest the wrong way.
 HCI leaves five controller options on that tinytalk's build has off, so the
 sample (and `samples/m2`) turns them off: `BT_PHY_UPDATE`, `BT_CTLR_PRIVACY`,
 `BT_CTLR_FILTER_ACCEPT_LIST`, `BT_CTLR_CONN_RSSI`, `BT_HCI_VS` (3,000 B, no
-LTO). Against tinytalk's own door-lock at the same commit, 2M PHY and LE
+LTO). It also turns on controller-to-host ACL flow control, which tinyble
+never enables: `BT_HCI_ACL_FLOW_CONTROL=n`, with the SDC driver logging at
+warning level as in tinytalk's build, saves 584 B flash and 184 B RAM (LTO). Against tinytalk's own door-lock at the same commit, 2M PHY and LE
 Ping off in both, measured 2026-10-16 on `decawave_dwm3001cdk`:
 
 | | Flash (B) | RAM (B) |
 |---|---:|---:|
-| tinyble door-lock, LTO | 274,484 | 88,992 |
+| tinyble door-lock, LTO | 273,900 | 88,808 |
 | tinytalk door-lock, Zephyr host, LTO | 297,648 | 97,184 |
-| **difference** | **-23,164** | **-8,192** |
+| **difference** | **-23,748** | **-8,376** |
 
 Without LTO the map attributes the BLE side:
 
