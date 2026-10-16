@@ -52,10 +52,10 @@
 #define E_INVALID_LEN    0x0Du
 #define E_UNSUPP_GROUP   0x10u
 
-/* HCI commands owed, sent lowest bit first, one at a time. Bits 0 to 4 are
+/* HCI commands owed, sent lowest bit first, one at a time. Bits 0 to 5 are
  * the init sequence. */
-enum { C_EVT_MASK, C_LE_EVT_MASK, C_LE_BUF, C_RAND_ADDR, C_ADV_PARAMS, C_ADV_DATA, C_ADV_EN,
-       C_DISC };
+enum { C_EVT_MASK, C_LE_EVT_MASK, C_LE_BUF, C_DLE, C_RAND_ADDR, C_ADV_PARAMS, C_ADV_DATA,
+       C_ADV_EN, C_DISC };
 /* ACL PDUs owed, sent lowest bit first while the controller has buffers. */
 enum { P_ATT, P_SMP, P_REJ, P_CPUR, P_IND };
 
@@ -148,9 +148,9 @@ static void leave(void)
 
 /* ---- HCI commands --------------------------------------------------------- */
 
-static const uint16_t k_op[] = {0x0C01u, 0x2001u, 0x2002u, 0x2005u,
+static const uint16_t k_op[] = {0x0C01u, 0x2001u, 0x2002u, 0x2024u, 0x2005u,
 				 0x2006u, 0x2008u, 0x200Au, 0x0406u};
-static const uint8_t k_plen[] = {8, 8, 0, 6, 15, 32, 1, 3};
+static const uint8_t k_plen[] = {8, 8, 0, 4, 6, 15, 32, 1, 3};
 
 static void cmd(void)
 {
@@ -184,6 +184,12 @@ static void cmd(void)
 		break;
 	case C_LE_EVT_MASK: /* LE Connection Complete */
 		p[0] = 0x01;
+		break;
+	case C_DLE: /* suggested data length: the ACL length, at its 1M time.
+		     * Zephyr sends it too; the controller then starts the update,
+		     * so the peer's PDUs arrive whole. */
+		put16(p, (uint16_t)(s.mtu_max + 4u));
+		put16(p + 2, (uint16_t)((s.mtu_max + 4u + 14u) * 8u));
 		break;
 	case C_RAND_ADDR:
 		memcpy(p, s.addr, 6);
@@ -231,6 +237,9 @@ static void cmd_complete(uint16_t op, uint8_t status, const uint8_t *ret, uint8_
 		if (get16(ret) < MTU_MIN + 4u || !ret[2]) {
 			status = 0xFFu;
 		}
+	}
+	if (op == 0x2024u) { /* without it the link stays at 27 B */
+		status = 0;
 	}
 	if (status) {
 		s.state = 2;
@@ -758,7 +767,7 @@ void tb_init(const uint8_t *addr)
 	s.conn = NO_CONN;
 	s.ncmd = 1;
 	s.mtu = MTU_MIN;
-	s.cmds = BIT(C_EVT_MASK) | BIT(C_LE_EVT_MASK) | BIT(C_LE_BUF) | BIT(C_ADV_PARAMS);
+	s.cmds = BIT(C_EVT_MASK) | BIT(C_LE_EVT_MASK) | BIT(C_LE_BUF) | BIT(C_DLE) | BIT(C_ADV_PARAMS);
 	if (addr) {
 		memcpy(s.addr, addr, 6);
 		s.addr[6] = 1;

@@ -284,6 +284,14 @@ static const uint8_t k_addr[6] = {0x11, 0x22, 0x33, 0x44, 0x55, 0xC6};
 static const uint8_t k_ad[] = {0x02, 0x01, 0x06, 0x0B, 0x16, 0xF6, 0xFF, 0x00,
 			       0x00, 0x0F, 0xF1, 0xFF, 0x01, 0x80, 0x00};
 
+static const char *cmd_hex(const char *hdr, const char *params)
+{
+	static char out[200];
+
+	snprintf(out, sizeof(out), "%s%s", hdr, params);
+	return out;
+}
+
 static void up(unsigned int acl_len, unsigned int credits)
 {
 	char ret[16];
@@ -298,6 +306,11 @@ static void up(unsigned int acl_len, unsigned int credits)
 	EXPECT(TB_HCI_CMD, "022000");
 	snprintf(ret, sizeof(ret), "%02x%02x%02x", acl_len & 0xFF, acl_len >> 8, credits);
 	cc(0x2002, ret);
+	acl_len = acl_len > 251 ? 251 : acl_len;
+	snprintf(ret, sizeof(ret), "%02x%02x%02x%02x", acl_len & 0xFF, acl_len >> 8,
+		 ((acl_len + 14) * 8) & 0xFF, ((acl_len + 14) * 8) >> 8);
+	EXPECT(TB_HCI_CMD, cmd_hex("242004", ret));
+	cc(0x2024, "");
 	EXPECT(TB_HCI_CMD, "052006 1122334455c6");
 	cc(0x2005, "");
 	EXPECT(TB_HCI_CMD, "06200f a000 f000 00 01 00 000000000000 07 00");
@@ -365,6 +378,8 @@ static void test_init_and_adv(void)
 	cc(0x2001, "");
 	EXPECT(TB_HCI_CMD, "022000");
 	cc(0x2002, "1b0002");
+	EXPECT(TB_HCI_CMD, "242004 1b00 4801"); /* 27 B at 328 us */
+	rx(TB_HCI_EVT, "0e04 01 2420 01"); /* no DLE support: carry on */
 	EXPECT(TB_HCI_CMD, "06200f a000 f000 00 00 00 000000000000 07 00");
 	cc(0x2006, "");
 	CHECK(g_ready == 0);
