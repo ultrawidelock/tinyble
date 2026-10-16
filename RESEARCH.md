@@ -153,7 +153,7 @@ timeouts 15,000 ms (`BleConfig.h:215, 226`), ack-send timeout 2,500 ms
 The Matter spec's BTP and advertising sections are not cited by number: no
 copy was opened in this session.
 
-Service Changed note: tinymatter registers and withdraws 0xFFF6 at runtime
+Service Changed note: tinytalk registers and withdraws 0xFFF6 at runtime
 because macOS answers a descriptor discovery on C1 with CBError 8 and then
 poisons its cache for the device (`matter_ble_zephyr.c:365-372`, measured in
 ultrawidelock on 2026-08-27). The brief asks for a fixed table. Both are
