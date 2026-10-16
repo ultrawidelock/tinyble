@@ -336,3 +336,16 @@ success rate.
 After the trace, tinyble put those six behaviours behind macros, off by
 default (README.md): 2,735 B flash and 81 B RAM, against 3,115 B and 85 B with
 all on (measured 2026-10-16).
+
+### M2 build (2026-10-16)
+
+`samples/m2` (README.md) on `decawave_dwm3001cdk`, no LTO: whole image
+83,736 B flash and 16,224 B RAM; host side 4,146 B flash and 1,372 B RAM
+(tinyble core 2,563 B and 81 B, port 282 B and 28 B, Matter table 151 B,
+hci_raw.c 582 B and 1,263 B, net_buf 568 B), inside the 6,429 B and 2,031 B
+budget. Controller as in "Controller trims": peripheral SDC, DLE 251 B, 2M PHY
+and LE Ping off, default 3 TX and 2 RX buffers.
+
+tinyble now sends LE Write Suggested Default Data Length (251 B, 2,120 us), as
+the Zephyr host does: the SDC sources and headers do not say it starts the
+data length update without one. Not yet run on hardware.
