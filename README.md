@@ -46,9 +46,11 @@ tests both ways.
 
 `zephyr/` makes the repository a Zephyr module: `CONFIG_TINYBLE=y` (it needs
 `CONFIG_BT_HCI_RAW=y`) builds the core, `port/zephyr/tb_port_zephyr.c` and,
-by default, the Matter table. The port runs on the thread that loops on
-`tb_zephyr_wait()` (`include/tinyble/tb_zephyr.h`); every `tb_*` call and
-hook must stay on that thread.
+by default, the Matter table. The port (`include/tinyble/tb_zephyr.h`) runs
+tinyble one of two ways: on a thread of the application's that loops on
+`tb_zephyr_wait()`, where every `tb_*` call and hook must stay; or on the
+system work queue after `tb_zephyr_start()` (needs `CONFIG_POLL`), where other
+threads make `tb_*` calls between `tb_zephyr_lock()` and `tb_zephyr_unlock()`.
 
 `samples/m2` is the M2 bench app: Matter advertising, the Matter table, C1
 writes indicated back on C2. Built for `decawave_dwm3001cdk`, no LTO,
@@ -62,7 +64,7 @@ measured 2026-10-16:
 | hci_raw.c and its pools | 582 | 1,263 |
 | net_buf | 568 | 0 |
 | **host side** | **4,146** | **1,372** |
-| whole image (SDC, MPSL, kernel) | 83,736 | 16,224 |
+| whole image (SDC, MPSL, kernel) | 80,756 | 16,224 |
 
 ```
 west build -b decawave_dwm3001cdk -d build/m2-dwm samples/m2
@@ -70,8 +72,49 @@ west build -b decawave_dwm3001cdk -d build/m2-dwm-mon samples/m2 -- -DEXTRA_CONF
 ```
 
 The second adds the HCI monitor for a bench trace (95,888 B flash, 27,936 B
-RAM); its RTT control block is at 0x20000410, so pass that to
-`trace/rtt_drain.py`.
+RAM, measured before the five controller lines below); its RTT control block
+is at 0x20000410, so pass that to `trace/rtt_drain.py`.
+
+## tinytalk door-lock
+
+`CONFIG_TINYBLE_TINYTALK=y` (with `CONFIG_TINYTALK_BLE=n`) builds
+`port/tinytalk/matter_ble_tinyble.c`, which provides tinytalk's `matter_ble.h`
+on tinyble, plus `matter_ble_start()` and `matter_ble_advertise()`
+(`include/tinyble/tb_tinytalk.h`). tinyble runs on the system work queue;
+tinytalk's callbacks run from a work item without the port lock, so the two
+locks never nest the wrong way.
+
+`samples/door-lock` is tinytalk's door-lock sample with BLE on tinyble. Raw
+HCI leaves five controller options on that tinytalk's build has off, so the
+sample (and `samples/m2`) turns them off: `BT_PHY_UPDATE`, `BT_CTLR_PRIVACY`,
+`BT_CTLR_FILTER_ACCEPT_LIST`, `BT_CTLR_CONN_RSSI`, `BT_HCI_VS` (3,000 B, no
+LTO). Against tinytalk's own door-lock at the same commit, 2M PHY and LE
+Ping off in both, measured 2026-10-16 on `decawave_dwm3001cdk`:
+
+| | Flash (B) | RAM (B) |
+|---|---:|---:|
+| tinyble door-lock, LTO | 274,484 | 88,992 |
+| tinytalk door-lock, Zephyr host, LTO | 297,648 | 97,184 |
+| **difference** | **-23,164** | **-8,192** |
+
+Without LTO the map attributes the BLE side:
+
+| | tinyble (B) | Zephyr host (B) |
+|---|---:|---:|
+| host: core, table, port; Zephyr's host | 3,200 / 225 | 30,625 / 10,427 |
+| raw HCI, net_buf, extra k_poll | 2,336 / 1,275 | 887 / 0 |
+| **host side** (budget 6,429 / 2,031) | **5,536 / 1,500** | **31,512 / 10,427** |
+| tinytalk adapter | 1,437 / 1,370 | 2,890 / 1,575 |
+| SDC library and driver | 39,912 / 5,794 | 37,665 / 4,678 |
+
+Flash / RAM. The controller costs 2,247 B flash and 1,116 B RAM more for
+DLE 251 B, its one remaining option difference; tinyble needs it because it
+does not reassemble. The work queue mode
+pulls in 828 B more of `kernel/poll.c`.
+
+```
+TINYTALK=<a tinytalk tree> west build -b decawave_dwm3001cdk -d build/m3-tb samples/door-lock
+```
 
 ## Commands
 
@@ -80,6 +123,7 @@ RAM); its RTT control block is at 0x20000410, so pass that to
 | `make test` | Host tests against a fake controller, options off and on |
 | `make asan` | The same under AddressSanitizer and UndefinedBehaviorSanitizer |
 | `make size ARM_CC=<arm-gcc>` | Cortex-M4 size; fails over 5,291 B flash or 760 B RAM |
+| `make adapter TINYTALK=<tree>` | The tinytalk adapter against a scripted phone, tinytalk's BTP codec, sanitizers |
 
 On macOS, where `cc` may be a toolchain shim, pass `CC=/usr/bin/clang`.
 
@@ -91,10 +135,14 @@ include/tinyble/tb_matter.h handles in the Matter table
 src/tinyble.c               HCI, L2CAP fixed channels, ATT server
 src/tb_matter_gatt.c        the Matter commissioning GATT table
 include/tinyble/tb_zephyr.h Zephyr port API
+include/tinyble/tb_tinytalk.h tinytalk adapter API
 port/zephyr/                Zephyr port on raw HCI
+port/tinytalk/              tinytalk's matter_ble.h on tinyble
 zephyr/                     Zephyr module glue (CMake, Kconfig)
 samples/m2/                 M2 bench app
+samples/door-lock/          tinytalk's door-lock on tinyble (M3)
 tests/host/                 fake controller and tests
+tests/tinytalk/             adapter test and Zephyr stubs
 trace/                      M0: HCI monitor overlay, RTT drainer, btsnoop converter
 ```
 
@@ -139,4 +187,5 @@ to the iPhone.
   app, discover, subscribe C2, write C1 and expect it back; watch
   `tb_rx_dropped` (0 means the data length update worked) and whether 2
   event buffers and 1 ACL TX buffer keep up.
-- M3: the tinytalk adapter (`tb_on_*` onto `matter_ble.h`).
+- M3: `samples/door-lock` builds and the adapter test passes. Still to do
+  on the bench: Thread attaches (the M3 gate), then M4's Apple Home runs.

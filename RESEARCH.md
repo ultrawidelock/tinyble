@@ -349,3 +349,48 @@ and LE Ping off, default 3 TX and 2 RX buffers.
 tinyble now sends LE Write Suggested Default Data Length (251 B, 2,120 us), as
 the Zephyr host does: the SDC sources and headers do not say it starts the
 data length update without one. Not yet run on hardware.
+
+Later the same day `samples/m2` took the five raw-HCI controller lines from
+"M3 build": 80,756 B flash, RAM unchanged.
+
+### M3 build (2026-10-16)
+
+`samples/door-lock` (README.md) is tinytalk's door-lock at ec652b4 with
+`CONFIG_TINYTALK_BLE=n` and `port/tinytalk/matter_ble_tinyble.c` providing
+`matter_ble.h`. It builds; Thread attach on the bench is the open half of the
+gate. Compared with tinytalk's own door-lock at the same commit plus
+`measure/ctlr-lean.conf`, on `decawave_dwm3001cdk`:
+
+| Build | tinyble flash (B) | tinyble RAM (B) | Zephyr host flash (B) | Zephyr host RAM (B) |
+|---|---:|---:|---:|---:|
+| LTO | 274,484 | 88,992 | 297,648 | 97,184 |
+| no LTO | 303,968 | 89,056 | 330,368 | 97,248 |
+
+- Raw HCI changes controller defaults. tinytalk's prj.conf sets
+  `BT_PHY_UPDATE=n` and `BT_HCI_VS=n`, and Zephyr's host keeps privacy, the
+  accept list and connection RSSI off; under `BT_HCI_RAW` all five came back
+  on. Off again: 3,000 B (no LTO). `BT_CTLR_PHY` has no prompt; it follows
+  `BT_PHY_UPDATE`. With 2M and Coded off the SDC has no PHY update procedure
+  either way (`nrf/subsys/bluetooth/controller/hci_driver.c`). In tinytalk's
+  build `BT_PHY_UPDATE=n` also hides `BT_CTLR_PHY_2M`, so ctlr-lean.conf only
+  took LE Ping off there.
+- The one controller difference left is DLE 251 B: SDC library and driver
+  39,912 B and 5,794 B RAM against 37,665 B and 4,678 B. tinyble needs it,
+  since it drops an L2CAP PDU split across ACL packets; reassembly instead
+  is a design change.
+- Host side, no LTO: 5,536 B flash and 1,500 B RAM (core 2,615 B and 81 B,
+  table 151 B, port 434 B and 144 B, hci_raw.c 889 B and 1,275 B, net_buf
+  619 B, 828 B more of kernel/poll.c for `k_work_poll`). Zephyr's host:
+  31,512 B and 10,427 B.
+- Adapter 1,437 B and 1,370 B (1,024 B of it the BTP reassembly area), against
+  `matter_ble_zephyr.c` at 2,890 B and 1,575 B.
+- Threads: tinyble runs on the system work queue (`tb_zephyr_start()`), where
+  tinytalk already runs PASE and its timers; no new stack. tinytalk can call
+  `matter_ble_send()` from other threads, so the adapter takes the port lock,
+  and it calls tinytalk's three callbacks from a work item without that lock:
+  they take tinytalk's lock, which a sender waiting on ours may hold.
+- `make adapter TINYTALK=<tree>` runs the adapter under sanitizers against a
+  scripted phone that uses tinytalk's BTP codec: both orders of handshake
+  write and subscribe, a 400 B message in and a 300 B reply out with acks at
+  half the window, a drop mid-send, a sequence error. 197 checks pass, and
+  starting our sequence at 0 instead of 1 fails 7 of them.
