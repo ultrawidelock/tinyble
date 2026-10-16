@@ -29,7 +29,7 @@ SIZE_RAM_MAX := 760
 FULL := -DTB_FIND_BY_TYPE=1 -DTB_READ_BLOB=1 -DTB_TYPE128=1 -DTB_SIG_REJECT=1 \
 	-DTB_SMP_REFUSE=1 -DTB_ATT_TIMEOUT=1
 
-.PHONY: test asan size clean
+.PHONY: test asan adapter size clean
 
 $(BUILD)/test: $(SRCS) $(TESTS) $(HDRS)
 	@mkdir -p $(@D)
@@ -54,6 +54,20 @@ test: $(BUILD)/test $(BUILD)/test_full
 asan: $(BUILD)/test_asan $(BUILD)/test_asan_full
 	$(BUILD)/test_asan
 	$(BUILD)/test_asan_full
+
+# port/tinytalk against tinytalk's BTP codec, Zephyr stubbed:
+# make adapter TINYTALK=<a tinytalk tree>
+ADAPTER := $(SRCS) port/tinytalk/matter_ble_tinyble.c tests/tinytalk/test_adapter.c \
+	$(TINYTALK)/src/matter_btp.c
+ADAPTER_DEFS := -DCONFIG_TINYTALK_VENDOR_ID=0xFFF1 -DCONFIG_TINYTALK_PRODUCT_ID=0x8001 \
+	-DCONFIG_TINYTALK_DISCRIMINATOR=0xF00
+
+adapter:
+	@test -n "$(TINYTALK)" || { echo "make adapter TINYTALK=<a tinytalk tree>"; exit 1; }
+	@mkdir -p $(BUILD)
+	$(CC) $(CSTD) $(WARN) $(SAN) $(ADAPTER_DEFS) $(INCS) -Itests/tinytalk/stub \
+		-I$(TINYTALK)/include $(ADAPTER) -o $(BUILD)/test_adapter
+	$(BUILD)/test_adapter
 
 # text + data is flash, data + bss is RAM, summed over tinyble's objects.
 size: $(SRCS) $(HDRS)

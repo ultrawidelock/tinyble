@@ -8,3 +8,8 @@ config TINYBLE_MATTER_GATT
 	bool "Matter commissioning GATT table"
 	depends on TINYBLE
 	default y
+
+config TINYBLE_TINYTALK
+	bool "tinytalk's BLE transport (matter_ble.h) on tinyble"
+	depends on TINYBLE_MATTER_GATT && TINYTALK && !TINYTALK_BLE
+	select POLL
