@@ -916,6 +916,63 @@ static void test_small_controller(void)
 	g_auto_nocp = 1;
 }
 
+static void test_notify(void)
+{
+	static uint8_t big[30];
+	uint8_t pdu[64];
+
+	for (size_t i = 0; i < sizeof(big); i++) {
+		big[i] = (uint8_t)i;
+	}
+	up(27, 1);
+	CHECK(tb_notify(TB_MATTER_H_C2, k_hs, 3) == TB_ENOTCONN);
+	connect();
+
+	/* Indications on is not notifications on; C1 has no CCC. */
+	ATT_IN("12 1100 0200");
+	ATT_OUT("13");
+	CHECK(tb_notify(TB_MATTER_H_C2, k_hs, 3) == TB_EAGAIN);
+	CHECK(tb_notify(TB_MATTER_H_C1, k_hs, 3) == TB_EAGAIN);
+	ATT_IN("12 1100 0100");
+	ATT_OUT("13");
+	CHECK(tb_notify(TB_MATTER_H_C2, k_hs, 3) == 0);
+	ATT_OUT("1b 1000 656c04");
+
+	/* Length limit is MTU - 3; the data is copied, no hook follows. */
+	g_inds = 0;
+	CHECK(tb_notify(TB_MATTER_H_C2, big, 21) == TB_EINVAL);
+	CHECK(tb_notify(TB_MATTER_H_C2, big, 20) == 0);
+	memset(big, 0xAA, 20);
+	ATT_OUT("1b 1000 000102030405060708090a0b0c0d0e0f10111213");
+	for (size_t i = 0; i < sizeof(big); i++) {
+		big[i] = (uint8_t)i;
+	}
+	CHECK(g_inds == 0);
+	EXPECT_NONE();
+
+	/* One controller buffer: a 37 B PDU in two packets keeps the PDU busy
+	 * until the second has gone; the next one is built at once but waits
+	 * for a buffer, and goes before a reply owed meanwhile. */
+	ATT_IN("02 0502");
+	ATT_OUT("03 f700");
+	g_auto_nocp = 0;
+	CHECK(tb_notify(TB_MATTER_H_C2, big, sizeof(big)) == 0);
+	CHECK(g_tail - g_head == 1);
+	CHECK(tb_notify(TB_MATTER_H_C2, k_hs, 3) == TB_EBUSY);
+	nocp(1);
+	CHECK(pop_pdu(pdu, 27) == 37 && pdu[4] == 0x1B && !memcmp(pdu + 7, big, sizeof(big)));
+	CHECK(tb_notify(TB_MATTER_H_C2, k_hs, 3) == 0);
+	ATT_IN("0a 1100");
+	EXPECT_NONE();
+	nocp(1);
+	ATT_OUT("1b 1000 656c04");
+	nocp(1);
+	ATT_OUT("0b 0100");
+	g_auto_nocp = 1;
+	nocp(1);
+	EXPECT_NONE();
+}
+
 /* Random ACL and events: no crash, no oversized or malformed packet out. */
 static void test_random(void)
 {
@@ -985,6 +1042,7 @@ int main(void)
 	test_mtu23_fill();
 	test_errors();
 	test_writes_and_indications();
+	test_notify();
 	test_credits();
 	test_l2cap_smp();
 	test_acl_drops();

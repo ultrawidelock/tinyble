@@ -862,7 +862,8 @@ void tb_adv(const uint8_t *ad, uint8_t len)
 	leave();
 }
 
-int tb_indicate(uint16_t handle, const uint8_t *data, uint16_t len)
+/* Linked, and the CCC after value @p handle has @p bit (1 notify, 2 indicate). */
+static int subscribed(uint16_t handle, unsigned int bit)
 {
 	const struct tb_attr *c;
 
@@ -873,8 +874,18 @@ int tb_indicate(uint16_t handle, const uint8_t *data, uint16_t len)
 		return TB_EAGAIN;
 	}
 	c = attr((uint16_t)(handle + 1u)); /* the CCC after the value */
-	if (!(c->fl & TB_A_CCC) || !(s.ccc[c->fl & TB_A_LEN][0] & 2u)) {
+	if (!(c->fl & TB_A_CCC) || !(s.ccc[c->fl & TB_A_LEN][0] & bit)) {
 		return TB_EAGAIN;
+	}
+	return 0;
+}
+
+int tb_indicate(uint16_t handle, const uint8_t *data, uint16_t len)
+{
+	int rc = subscribed(handle, 2u);
+
+	if (rc) {
+		return rc;
 	}
 	if (s.ind) {
 		return TB_EBUSY;
@@ -887,6 +898,33 @@ int tb_indicate(uint16_t handle, const uint8_t *data, uint16_t len)
 	s.ind_h = handle;
 	s.ind_data = data;
 	s.ind_len = len;
+	leave();
+	return 0;
+}
+
+/* Built straight into the outbound PDU, ahead of anything owed: nothing to
+ * keep, and it goes out as the controller frees buffers, like the rest. */
+int tb_notify(uint16_t handle, const uint8_t *data, uint16_t len)
+{
+	int rc = subscribed(handle, 1u);
+
+	if (rc) {
+		return rc;
+	}
+	if (s.tx_off != s.tx_len) {
+		return TB_EBUSY;
+	}
+	if (len > s.mtu - 3u) {
+		return TB_EINVAL;
+	}
+	enter();
+	put16(tx_pdu, (uint16_t)(3u + len));
+	put16(tx_pdu + 2, CID_ATT);
+	tx_pdu[4] = 0x1B;
+	put16(tx_pdu + 5, handle);
+	memcpy(tx_pdu + 7, data, len);
+	s.tx_len = (uint16_t)(7u + len);
+	s.tx_off = 0;
 	leave();
 	return 0;
 }

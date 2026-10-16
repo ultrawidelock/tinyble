@@ -3,7 +3,7 @@
 /**
  * @file tinyble.h
  * @brief A minimal BLE peripheral host: one connection, a const GATT table,
- *        indications, no pairing. Portable C11; speaks HCI through three port
+ *        indications and notifications, no pairing. Portable C11; speaks HCI through three port
  *        functions.
  *
  * Size is the design goal, so the rules are strict:
@@ -120,6 +120,15 @@ void tb_adv(const uint8_t *ad, uint8_t len);
  *         TB_EBUSY while one is outstanding, TB_EINVAL if it exceeds MTU - 3.
  */
 int tb_indicate(uint16_t handle, const uint8_t *data, uint16_t len);
+
+/**
+ * Notify @p len bytes on characteristic value @p handle. No confirmation, so
+ * no hook: @p data is copied before the call returns.
+ * @return 0, TB_ENOTCONN, TB_EAGAIN if the peer has not enabled notifications,
+ *         TB_EBUSY while the last outbound PDU is still going to the
+ *         controller, TB_EINVAL if it exceeds MTU - 3.
+ */
+int tb_notify(uint16_t handle, const uint8_t *data, uint16_t len);
 
 /** Current ATT MTU: 23 until the peer exchanges it. */
 uint16_t tb_mtu(void);
