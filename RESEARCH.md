@@ -248,7 +248,7 @@ Milestones and gates:
 | M0 | Flash the current Zephyr door-lock build with an HCI monitor (for example Zephyr's RTT monitor output) and record one Apple Home commissioning, connect to disconnect. Also measure today's success rate over 10 runs | Go if the trace holds no procedure outside item 3, or at most 2 new ones that fit the budget |
 | M1 | Host core and tests against the fake controller; KAT replay of M0 | Go if all KATs pass and the host builds within 6,429 B flash and 2,031 B RAM |
 | M2 | nRF52833 on route B: raw HCI with minimal pools, advertising, one connection, GATT discovery from a phone app, Thread attached | No-go if 2 event and 1 ACL TX buffers drop packets with an iPhone and the larger pools break 2,031 B; stop and reassess |
-| M3 | matter_ble.h seam on tinyble; door-lock builds with `CONFIG_TINYTALK_BLE=n` | Go if the image builds and Thread still attaches on the bench |
+| M3 | matter_ble.h seam on tinyble; door-lock builds with `CONFIG_TINYTALK_BLE=n` (tinylock's `door-lock/` with `stacks/tinyble.conf` since 2026-10-17) | Go if the image builds and Thread still attaches on the bench |
 | M4 | Apple Home on hardware, Thread enabled | Ship if 10 of 10 commissionings succeed (at least the M0 baseline) and Thread operation after commissioning is unchanged |
 
 ## Reproduce
@@ -360,6 +360,13 @@ Later the same day `samples/m2` took the five raw-HCI controller lines from
 driver log at warning level, 79,808 B and 15,976 B.
 
 ### M3 build (2026-10-16)
+
+Since 2026-10-17 the door-lock is tinylock's (`door-lock/`, BLE from
+`stacks/tinyble.conf`) and `samples/door-lock` is gone from this repo.
+tinylock 7276ee4 with tinytalk 9604083 and tinyble d70980c, LTO: 273,204 B
+flash and 87,448 B RAM; with `stacks/bt-host.conf` instead, 298,544 B and
+97,248 B (measured 2026-10-17, `decawave_dwm3001cdk`). The rest of this
+section is the former copy.
 
 `samples/door-lock` (README.md) is tinytalk's door-lock at ec652b4 with
 `CONFIG_TINYTALK_BLE=n` and `port/tinytalk/matter_ble_tinyble.c` providing

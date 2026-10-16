@@ -85,22 +85,27 @@ on tinyble, `matter_ble_start()` and `matter_ble_advertise()` included
 tinytalk's callbacks run from a work item without the port lock, so the two
 locks never nest the wrong way.
 
-`samples/door-lock` is tinytalk's door-lock sample with BLE on tinyble. Raw
-HCI leaves five controller options on that tinytalk's build has off, so the
-sample (and `samples/m2`) turns them off: `BT_PHY_UPDATE`, `BT_CTLR_PRIVACY`,
+The door-lock sample lives in the tinylock repo (`door-lock/`), which takes
+BLE from tinyble through its `stacks/tinyble.conf` in place of
+`stacks/bt-host.conf`. Raw HCI leaves five controller options on that
+tinytalk's build has off, so that fragment (and `samples/m2`) turns them off: `BT_PHY_UPDATE`, `BT_CTLR_PRIVACY`,
 `BT_CTLR_FILTER_ACCEPT_LIST`, `BT_CTLR_CONN_RSSI`, `BT_HCI_VS` (3,000 B, no
 LTO). It also turns on controller-to-host ACL flow control, which tinyble
 never enables: `BT_HCI_ACL_FLOW_CONTROL=n`, with the SDC driver logging at
-warning level as in tinytalk's build, saves 584 B flash and 184 B RAM (LTO). Against tinytalk's own door-lock at the same commit, 2M PHY and LE
-Ping off in both, measured 2026-10-16 on `decawave_dwm3001cdk`:
+warning level as in tinytalk's build, saves 584 B flash and 184 B RAM (LTO). tinylock 7276ee4 with tinytalk
+9604083 and tinyble d70980c, LTO, measured 2026-10-17 on
+`decawave_dwm3001cdk`, each stack fragment as committed (the Zephyr-host one
+keeps LE Ping on):
 
 | | Flash (B) | RAM (B) |
 |---|---:|---:|
-| tinyble door-lock, LTO | 272,380 | 87,448 |
-| tinytalk door-lock, Zephyr host, LTO | 297,648 | 97,184 |
-| **difference** | **-25,268** | **-9,736** |
+| door-lock, `stacks/tinyble.conf` | 273,204 | 87,448 |
+| door-lock, `stacks/bt-host.conf` (Zephyr host) | 298,544 | 97,248 |
+| **difference** | **-25,340** | **-9,800** |
 
-Without LTO the map attributes the BLE side:
+Without LTO the map attributes the BLE side (measured 2026-10-16 on this
+repo's former copy of the sample, tinytalk ec652b4, 2M PHY and LE Ping off in
+both):
 
 | | tinyble (B) | Zephyr host (B) |
 |---|---:|---:|
@@ -115,7 +120,9 @@ reassembles and splits L2CAP PDUs. The work queue mode pulls in 828 B more
 of `kernel/poll.c`.
 
 ```
-TINYTALK=<a tinytalk tree> west build -b decawave_dwm3001cdk -d build/m3-tb samples/door-lock
+west build -b decawave_dwm3001cdk -d <build dir> <tinylock>/door-lock -- \
+  -DZEPHYR_EXTRA_MODULES="<tinytalk>;<tinyble>" \
+  -DCONF_FILE="prj.conf;stacks/tinyble.conf;stacks/openthread.conf;stacks/nrf-security.conf"
 ```
 
 ## Commands
@@ -142,7 +149,6 @@ port/zephyr/                Zephyr port on raw HCI
 port/tinytalk/              tinytalk's matter_ble.h on tinyble
 zephyr/                     Zephyr module glue (CMake, Kconfig)
 samples/m2/                 M2 bench app
-samples/door-lock/          tinytalk's door-lock on tinyble (M3)
 tests/host/                 fake controller and tests
 tests/tinytalk/             adapter test and Zephyr stubs
 trace/                      M0: HCI monitor overlay, RTT drainer, btsnoop converter
