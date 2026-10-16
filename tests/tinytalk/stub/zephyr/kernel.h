@@ -7,6 +7,7 @@
 
 #define BIT(n)        (1u << (n))
 #define ARG_UNUSED(x) (void)(x)
+#define BUILD_ASSERT(c, msg) _Static_assert(c, msg)
 
 struct k_work {
 	void (*handler)(struct k_work *work);

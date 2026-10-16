@@ -12,4 +12,5 @@ config TINYBLE_MATTER_GATT
 config TINYBLE_TINYTALK
 	bool "tinytalk's BLE transport (matter_ble.h) on tinyble"
 	depends on TINYBLE_MATTER_GATT && TINYTALK && !TINYTALK_BLE
+	select TINYTALK_HAS_BLE
 	select POLL

@@ -27,6 +27,8 @@
 
 LOG_MODULE_REGISTER(tb_tinytalk, LOG_LEVEL_INF);
 
+BUILD_ASSERT(MATTER_BLE_API == 1, "port/tinytalk follows matter_ble.h version 1");
+
 #define RX_BUF 1024u /* largest inbound message; tinytalk's default */
 #define WINDOW 4u    /* BTP receive window we grant; tinytalk's default */
 
@@ -39,6 +41,7 @@ static struct matter_btp_tx s_tx;
 static uint8_t s_frag[MATTER_BTP_MAX_FRAGMENT]; /* the indication in flight */
 static uint8_t s_hs_len; /* handshake response held in s_frag until C2 is on */
 static bool s_claimed, s_handshaked, s_tx_active, s_busy, s_tx_notifies, s_ack_pending;
+static bool s_linked, s_started;
 static uint8_t s_tx_seq, s_ack_seq, s_unacked;
 static uint16_t s_frag_size, s_discriminator;
 
@@ -253,11 +256,13 @@ void tb_on_connect(const uint8_t peer[7])
 {
 	LOG_INF("BLE connected: %02X:%02X:%02X:%02X:%02X:%02X (%s)", peer[6], peer[5], peer[4],
 		peer[3], peer[2], peer[1], (peer[0] & 1u) ? "random" : "public");
+	s_linked = true;
 }
 
 void tb_on_disconnect(uint8_t reason)
 {
 	LOG_INF("BLE disconnected (0x%02x)", reason);
+	s_linked = false;
 	s_busy = false;
 	if (s_claimed) {
 		s_claimed = false;
@@ -317,17 +322,19 @@ uint16_t matter_ble_discriminator(void)
 	return s_discriminator ? s_discriminator : (uint16_t)CONFIG_TINYTALK_DISCRIMINATOR;
 }
 
-/* ---- tb_tinytalk.h -------------------------------------------------------- */
-
-void matter_ble_advertise(bool on)
+/* The service stays in the table; off with a link up says so (tb_tinytalk.h). */
+int matter_ble_advertise(bool on)
 {
 	uint16_t d = matter_ble_discriminator();
+	int rc;
 
 	tb_zephyr_lock();
 	s_ad[8] = (uint8_t)d;
 	s_ad[9] = (uint8_t)((d >> 8) & 0x0Fu);
 	tb_adv(s_ad, on ? sizeof(s_ad) : 0u);
+	rc = !on && s_linked ? -EBUSY : 0;
 	tb_zephyr_unlock();
+	return rc;
 }
 
 int matter_ble_start(void)
@@ -336,11 +343,16 @@ int matter_ble_start(void)
 	uint32_t lo = NRF_FICR->DEVICEADDR[0], hi = NRF_FICR->DEVICEADDR[1];
 	uint8_t addr[6] = {(uint8_t)lo, (uint8_t)(lo >> 8), (uint8_t)(lo >> 16),
 			   (uint8_t)(lo >> 24), (uint8_t)hi, (uint8_t)((hi >> 8) | 0xC0u)};
-	int rc = tb_zephyr_open();
+	int rc;
 
+	if (s_started) {
+		return 0;
+	}
+	rc = tb_zephyr_open();
 	if (rc == 0) {
 		tb_init(addr);
 		rc = tb_zephyr_start();
 	}
+	s_started = rc == 0;
 	return rc;
 }

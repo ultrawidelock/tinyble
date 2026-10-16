@@ -361,6 +361,8 @@ static void phone_send(const uint8_t *msg, size_t len)
 static void start(void)
 {
 	static const uint8_t k_mtu[] = {0x02, MTU, 0x00};
+	static const uint8_t k_addr[6] = {0x11, 0x22, 0x33, 0x44, 0x55, 0xE6};
+	static int started;
 	uint8_t pdu[8];
 
 	g_head = g_tail = 0;
@@ -373,8 +375,13 @@ static void start(void)
 	matter_ble_set_link_handler(on_link);
 	matter_ble_set_tx_handler(on_tx);
 	CHECK(matter_ble_start() == 0);
+	if (started++) {
+		/* A second start does nothing; restart tinyble by hand. */
+		CHECK(g_head == g_tail);
+		tb_init(k_addr);
+	}
 	CHECK(answer_cmds() == 5);
-	matter_ble_advertise(true);
+	CHECK(matter_ble_advertise(true) == 0);
 	CHECK(answer_cmds() == 2);
 	connect();
 	att_in(k_mtu, sizeof(k_mtu));
@@ -395,14 +402,17 @@ static void test_advert(void)
 	CHECK(g_adv_len == sizeof(k_want) && !memcmp(g_adv, k_want, sizeof(k_want)));
 	matter_ble_set_discriminator(0x123);
 	CHECK(matter_ble_discriminator() == 0x123);
-	matter_ble_advertise(true);
+	CHECK(matter_ble_advertise(true) == 0);
 	answer_cmds();
 	CHECK(g_adv[8] == 0x23 && g_adv[9] == 0x01);
 	matter_ble_set_discriminator(0);
-	matter_ble_advertise(false);
+	/* The service cannot go while a link is up; the advert can. */
+	CHECK(matter_ble_advertise(false) == -EBUSY);
 	answer_cmds();
 	evt("0504000100" "13");
 	settle();
+	CHECK(matter_ble_advertise(false) == 0);
+	answer_cmds();
 }
 
 /* The traced iPhone's order: handshake write, then subscribe, then PASE. */

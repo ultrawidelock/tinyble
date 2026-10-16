@@ -3,7 +3,7 @@
 /**
  * @file tb_tinytalk.h
  * @brief tinytalk's BLE commissioning transport (matter_ble.h) on tinyble,
- *        and what the application needs beyond it.
+ *        and where it differs from what matter_ble.h describes.
  *
  * Build tinytalk with CONFIG_TINYTALK_BLE=n and this with
  * CONFIG_TINYBLE_TINYTALK=y; port/tinytalk/matter_ble_tinyble.c provides
@@ -11,23 +11,13 @@
  */
 #pragma once
 
-#include <stdbool.h>
-
 #include <tinytalk/matter_ble.h>
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
-/** Open the controller and run tinyble on the system work queue. Call it
- *  before matter_commission_init(). */
-int matter_ble_start(void);
-
-/** Advertise the commissionable payload, with the current discriminator, or
- *  stop. tinyble readvertises by itself after a link drops; a disconnect also
- *  calls matter_commission_readvertise(). */
-void matter_ble_advertise(bool on);
-
-#ifdef __cplusplus
-}
-#endif
+/* - matter_ble_start() opens the controller and runs tinyble on the system
+ *   work queue.
+ * - The 0xFFF6 service is in tinyble's const table, so it is never withdrawn.
+ *   matter_ble_advertise(false) stops the advert and returns -EBUSY while a
+ *   link is up, as the Zephyr port does, 0 otherwise.
+ * - tinyble readvertises by itself after a link drops; a disconnect also
+ *   calls matter_commission_readvertise().
+ */

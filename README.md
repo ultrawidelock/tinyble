@@ -79,8 +79,9 @@ is at 0x20000410, so pass that to `trace/rtt_drain.py`.
 
 `CONFIG_TINYBLE_TINYTALK=y` (with `CONFIG_TINYTALK_BLE=n`) builds
 `port/tinytalk/matter_ble_tinyble.c`, which provides tinytalk's `matter_ble.h`
-on tinyble, plus `matter_ble_start()` and `matter_ble_advertise()`
-(`include/tinyble/tb_tinytalk.h`). tinyble runs on the system work queue;
+on tinyble, `matter_ble_start()` and `matter_ble_advertise()` included
+(`include/tinyble/tb_tinytalk.h` says where it differs), and selects
+`TINYTALK_HAS_BLE`. tinyble runs on the system work queue;
 tinytalk's callbacks run from a work item without the port lock, so the two
 locks never nest the wrong way.
 
