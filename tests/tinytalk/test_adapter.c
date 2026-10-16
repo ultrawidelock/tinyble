@@ -162,6 +162,8 @@ void matter_commission_readvertise(void)
 
 /* ---- HCI helpers ------------------------------------------------------------- */
 
+#define ACL 27u /* the controller's ACL length */
+
 static uint8_t g_adv[31];
 static uint8_t g_adv_len;
 
@@ -174,10 +176,10 @@ static void cc(uint16_t op, const uint8_t *ret, uint8_t n)
 }
 
 /* Answer every command at the head of the log; LE Read Buffer Size reports
- * 251 B and 3 buffers. Returns how many. */
+ * 27 B and 3 buffers, as at data length 27. Returns how many. */
 static int answer_cmds(void)
 {
-	static const uint8_t k_buf[] = {251, 0, 3};
+	static const uint8_t k_buf[] = {ACL, 0, 3};
 	int n = 0;
 
 	while (g_head != g_tail && g_log[g_head % LOG_MAX].type == TB_HCI_CMD) {
@@ -217,32 +219,47 @@ static void connect(void)
 	evt("3e1301000100010" "1aabbccddeeff18000000480000");
 }
 
+/* An ATT PDU from the phone, in ACL packets of the controller's length. */
 static void att_in(const uint8_t *pdu, uint16_t n)
 {
-	uint8_t b[300] = {0x01, 0x20, (uint8_t)(n + 4u), (uint8_t)((n + 4u) >> 8),
-			  (uint8_t)n, (uint8_t)(n >> 8), 0x04, 0x00};
+	uint8_t l2[300] = {(uint8_t)n, (uint8_t)(n >> 8), 0x04, 0x00};
+	uint8_t b[4 + ACL] = {0x01, 0x20};
 
-	memcpy(b + 8, pdu, n);
-	tb_hci_rx(TB_HCI_ACL, b, (uint16_t)(n + 8u));
+	memcpy(l2 + 4, pdu, n);
+	for (uint16_t off = 0, k; off < n + 4u; off = (uint16_t)(off + k)) {
+		k = (uint16_t)(n + 4u - off < ACL ? n + 4u - off : ACL);
+		b[2] = (uint8_t)k;
+		memcpy(b + 4, l2 + off, k);
+		tb_hci_rx(TB_HCI_ACL, b, (uint16_t)(4u + k));
+		b[1] = 0x10;
+	}
 }
 
-/* Pop the next ACL packet's ATT PDU into @p out and complete the packet.
+/* Pop the next ATT PDU, reassembled, into @p out, completing each packet.
  * Returns its length, or 0 if the head is not one. */
 static uint16_t att_out(uint8_t *out)
 {
 	static const uint8_t k_nocp[] = {0x13, 0x05, 0x01, 0x01, 0x00, 0x01, 0x00};
-	uint16_t n;
+	uint8_t l2[300];
+	uint16_t got = 0, want = 4;
 
 	answer_cmds();
 	if (g_head == g_tail || g_log[g_head % LOG_MAX].type != TB_HCI_ACL) {
 		return 0;
 	}
-	n = (uint16_t)(g_log[g_head % LOG_MAX].len - 8u);
-	CHECK(g_log[g_head % LOG_MAX].b[6] == 0x04);
-	memcpy(out, g_log[g_head % LOG_MAX].b + 8, n);
-	g_head++;
-	tb_hci_rx(TB_HCI_EVT, k_nocp, sizeof(k_nocp));
-	return n;
+	while (got < want && g_head != g_tail) {
+		const uint8_t *b = g_log[g_head % LOG_MAX].b;
+		uint16_t k = (uint16_t)(g_log[g_head++ % LOG_MAX].len - 4u);
+
+		CHECK(b[1] == (got ? 0x10 : 0x00) && k <= ACL);
+		memcpy(l2 + got, b + 4, k);
+		got = (uint16_t)(got + k);
+		want = got >= 4u ? (uint16_t)(4u + (l2[0] | l2[1] << 8)) : 4u;
+		tb_hci_rx(TB_HCI_EVT, k_nocp, sizeof(k_nocp));
+	}
+	CHECK(got == want && l2[2] == 0x04);
+	memcpy(out, l2 + 4, (size_t)(got - 4u));
+	return (uint16_t)(got - 4u);
 }
 
 static void write_c1(const uint8_t *v, uint16_t n)
@@ -356,7 +373,7 @@ static void start(void)
 	matter_ble_set_link_handler(on_link);
 	matter_ble_set_tx_handler(on_tx);
 	CHECK(matter_ble_start() == 0);
-	CHECK(answer_cmds() == 6);
+	CHECK(answer_cmds() == 5);
 	matter_ble_advertise(true);
 	CHECK(answer_cmds() == 2);
 	connect();
