@@ -364,8 +364,8 @@ gate. Compared with tinytalk's own door-lock at the same commit plus
 
 | Build | tinyble flash (B) | tinyble RAM (B) | Zephyr host flash (B) | Zephyr host RAM (B) |
 |---|---:|---:|---:|---:|
-| LTO | 273,900 | 88,808 | 297,648 | 97,184 |
-| no LTO | 303,968 | 89,056 | 330,368 | 97,248 |
+| LTO | 272,380 | 87,448 | 297,648 | 97,184 |
+| no LTO | 301,780 | 87,448 | 330,368 | 97,248 |
 
 - Raw HCI changes controller defaults. tinytalk's prj.conf sets
   `BT_PHY_UPDATE=n` and `BT_HCI_VS=n`, and Zephyr's host keeps privacy, the
@@ -379,16 +379,20 @@ gate. Compared with tinytalk's own door-lock at the same commit plus
   flow control, `zephyr/subsys/bluetooth/Kconfig`), which tinyble never
   enables, and logs the SDC driver at info level. Off, and at warning level
   as in tinytalk's build: -512 B flash and -184 B RAM, then -72 B flash (LTO).
-  The LTO row above includes both; the no-LTO rows and the figures below
-  predate them.
-- The other controller difference is DLE 251 B: SDC library and driver
-  39,912 B and 5,794 B RAM against 37,665 B and 4,678 B. tinyble needs it,
-  since it drops an L2CAP PDU split across ACL packets; reassembly instead
-  is a design change.
-- Host side, no LTO: 5,536 B flash and 1,500 B RAM (core 2,615 B and 81 B,
-  table 151 B, port 434 B and 144 B, hci_raw.c 889 B and 1,275 B, net_buf
-  619 B, 828 B more of kernel/poll.c for `k_work_poll`). Zephyr's host:
-  31,512 B and 10,427 B.
+- Data length 27 B, as in tinytalk's build, since tinyble reassembles
+  inbound L2CAP PDUs and splits outbound ones (one 251 B buffer each way;
+  core +89 B flash, +506 B RAM). The samples drop
+  `BT_BUF_ACL_RX_SIZE`/`TX_SIZE=251` and `BT_CTLR_DATA_LENGTH_MAX=251` for
+  `BT_DATA_LEN_UPDATE=n`. Against DLE 251 B: door-lock -1,520 B flash and
+  -1,360 B RAM (LTO), m2 -1,548 B and -1,360 B. The first trace already ran
+  at 27 B: the iPhone sent 185 B PDUs as 27 B fragments ("First commissioning
+  trace").
+- The table includes all three trims. SDC library and driver now 37,629 B
+  and 4,489 B RAM against Zephyr host's 37,665 B and 4,678 B (were 39,912 B
+  and 5,794 B at DLE 251 B with flow control on).
+- Host side, no LTO: 5,625 B flash and 1,226 B RAM (core, table and port
+  3,289 B and 731 B, hci_raw.c 889 B and 495 B, net_buf 619 B, 828 B more of
+  kernel/poll.c for `k_work_poll`). Zephyr's host: 31,512 B and 10,427 B.
 - Adapter 1,437 B and 1,370 B (1,024 B of it the BTP reassembly area), against
   `matter_ble_zephyr.c` at 2,890 B and 1,575 B.
 - Threads: tinyble runs on the system work queue (`tb_zephyr_start()`), where
@@ -399,5 +403,6 @@ gate. Compared with tinytalk's own door-lock at the same commit plus
 - `make adapter TINYTALK=<tree>` runs the adapter under sanitizers against a
   scripted phone that uses tinytalk's BTP codec: both orders of handshake
   write and subscribe, a 400 B message in and a 300 B reply out with acks at
-  half the window, a drop mid-send, a sequence error. 197 checks pass, and
-  starting our sequence at 0 instead of 1 fails 7 of them.
+  half the window, a drop mid-send, a sequence error, all through 27 B ACL
+  packets. 250 checks pass; starting our sequence at 0 instead of 1 failed 7
+  of the first 197.
