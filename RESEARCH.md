@@ -300,6 +300,11 @@ also ran at `DATA_LENGTH_MAX=27`, the same trap as the door-lock: its
 `ctlr-lean.conf` holds the first two. Against the M2 plan (DLE 251 B at the
 default 3 and 2 buffers) the trims save 1,328 B flash (sum of the single builds) and 768 B RAM.
 
+On the DWM3001CDK door-lock image (`trace/monitor.conf` plus
+`ctlr-lean.conf`, `build/dwm-lean`): 308,660 B flash against M0's 309,972 B,
+-1,312 B, RAM unchanged at 110,176 B (measured 2026-10-16). Still to check
+on the bench: one Apple Home commissioning on 1M PHY.
+
 ```
 west build -p always -b nrf52833dk/nrf52833 -d build/o-<x> <NCS>/zephyr/samples/bluetooth/hci_uart -- "-DEXTRA_CONF_FILE=measure/hci-periph.conf;measure/sdc-periph.conf;measure/hci-min-pools.conf;<the change>"
 ```
