@@ -308,3 +308,27 @@ on the bench: one Apple Home commissioning on 1M PHY.
 ```
 west build -p always -b nrf52833dk/nrf52833 -d build/o-<x> <NCS>/zephyr/samples/bluetooth/hci_uart -- "-DEXTRA_CONF_FILE=measure/hci-periph.conf;measure/sdc-periph.conf;measure/hci-min-pools.conf;<the change>"
 ```
+
+### First commissioning trace (2026-10-16)
+
+`build/dwm-lean` (Zephyr host, `ctlr-lean.conf`), one Apple Home
+commissioning, captured with `trace/rtt_drain.py` on up-buffer 1 and decoded
+with `trace/monitor2btsnoop.py`: 560 HCI packets, the monitor lost 1 ACL RX
+and 1 ACL TX record. The trace stays in `build/` (it holds the iPhone's
+address). Commissioning succeeded on 1M PHY.
+
+| Section 3 said | Trace shows |
+|---|---|
+| Row 4: DLE 251 B | DLE stayed 27 B both ways; 185 B PDUs went as 27 B ACL fragments |
+| Row 5, and section 7's "Zephyr uses HCI LE Connection Update" | Zephyr read remote features, then sent the L2CAP request anyway, 300 ms after connect; the iPhone accepted |
+| Row 6: iPhone MTU at least 247 B (inferred) | The iPhone asked for 185 B; BTP fragment 182 B |
+| Rows 7 to 9 | As expected: Read By Group Type, Read By Type 0x2803, Find Information |
+| Row 13: order | C1 handshake write first, then Find Information on C2's CCC, then the CCC write |
+| Row 15: Read of Device Name | Read By Type on 0x2A00 (16-bit), not Read; Appearance and PPCP never read |
+| Row 16: Service Changed CCC (inferred) | Written (0x0002) during discovery |
+| Rows 10, 17 to 19 | None: no Find By Type Value, Read, Read Blob, 128-bit Read By Type, Write Command, SMP, or signalling to reject |
+| Not listed | One 7 B PDU on fixed CID 0x003A right after connect; Zephyr ignored it |
+| Timing | Connect to disconnect 65.9 s: 54.2 s of idle link after discovery before the iPhone's first C1 write, then BTP and PASE in 9.4 s. The idle wait is on the iPhone side; its cause is unknown |
+
+Still open for M0: the unmodified `build/dwm-m0` image and the 10-run
+success rate.
