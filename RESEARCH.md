@@ -248,7 +248,7 @@ Milestones and gates:
 | M0 | Flash the current Zephyr door-lock build with an HCI monitor (for example Zephyr's RTT monitor output) and record one Apple Home commissioning, connect to disconnect. Also measure today's success rate over 10 runs | Go if the trace holds no procedure outside item 3, or at most 2 new ones that fit the budget |
 | M1 | Host core and tests against the fake controller; KAT replay of M0 | Go if all KATs pass and the host builds within 6,429 B flash and 2,031 B RAM |
 | M2 | nRF52833 on route B: raw HCI with minimal pools, advertising, one connection, GATT discovery from a phone app, Thread attached | No-go if 2 event and 1 ACL TX buffers drop packets with an iPhone and the larger pools break 2,031 B; stop and reassess |
-| M3 | matter_ble.h seam on tinyble; door-lock builds with `CONFIG_TINYMATTER_BLE=n` | Go if the image builds and Thread still attaches on the bench |
+| M3 | matter_ble.h seam on tinyble; door-lock builds with `CONFIG_TINYTALK_BLE=n` | Go if the image builds and Thread still attaches on the bench |
 | M4 | Apple Home on hardware, Thread enabled | Ship if 10 of 10 commissionings succeed (at least the M0 baseline) and Thread operation after commissioning is unchanged |
 
 ## Reproduce
@@ -330,6 +330,10 @@ address). Commissioning succeeded on 1M PHY.
 | Not listed | One 7 B PDU on fixed CID 0x003A right after connect; Zephyr ignored it |
 | Timing | Connect to disconnect 65.9 s: 54.2 s of idle link after discovery before the iPhone's first C1 write, then BTP and PASE in 9.4 s. The idle wait is on the iPhone side; its cause is unknown |
 
+Later the same day the 54.2 s idle was found to be a stale `_matterc` SRP
+record on Apple's border router, which Home dialled over Thread first; not a
+BLE fault. Fixed in tinytalk (a029e57).
+
 Still open for M0: the unmodified `build/dwm-m0` image and the 10-run
 success rate.
 
@@ -346,9 +350,10 @@ hci_raw.c 582 B and 1,263 B, net_buf 568 B), inside the 6,429 B and 2,031 B
 budget. Controller as in "Controller trims": peripheral SDC, DLE 251 B, 2M PHY
 and LE Ping off, default 3 TX and 2 RX buffers.
 
-tinyble now sends LE Write Suggested Default Data Length (251 B, 2,120 us), as
+tinyble then sent LE Write Suggested Default Data Length (251 B, 2,120 us), as
 the Zephyr host does: the SDC sources and headers do not say it starts the
-data length update without one. Not yet run on hardware.
+data length update without one. It no longer does: with L2CAP reassembly
+(09f9327, "M3 build") the controller stays at 27 B. Not yet run on hardware.
 
 Later the same day `samples/m2` took the five raw-HCI controller lines from
 "M3 build": 80,756 B flash, RAM unchanged; with flow control off and the

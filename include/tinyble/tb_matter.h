@@ -6,7 +6,8 @@
  *
  * The layout is the one Zephyr builds for the door-lock sample today: its
  * 0x1801 and 0x1800 services sort first (_1_gatt_svc, _2_gap_svc), then the
- * 0xFFF6 service registered at runtime. Keeping it means a phone that cached
+ * 0xFFF6 service, which Zephyr registers at runtime and tinyble holds in the
+ * same const table, always present. Keeping it means a phone that cached
  * the Zephyr build's handles stays right, and replies compare byte for byte
  * with a trace of that build.
  */
