@@ -46,6 +46,11 @@ void tb_on_indicated(int err)
 	ARG_UNUSED(err);
 }
 
+void tb_on_connect(const uint8_t peer[7])
+{
+	ARG_UNUSED(peer);
+}
+
 void tb_on_disconnect(uint8_t reason)
 {
 	ARG_UNUSED(reason);

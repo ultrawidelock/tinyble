@@ -124,10 +124,18 @@ static int g_ind_err, g_inds;
 static uint8_t g_disc_reason;
 static int g_discs;
 static int g_order; /* tb_on_indicated before tb_on_disconnect */
+static uint8_t g_peer[7];
+static int g_conns;
 
 void tb_on_ready(int err)
 {
 	g_ready = err;
+}
+
+void tb_on_connect(const uint8_t peer[7])
+{
+	memcpy(g_peer, peer, sizeof(g_peer));
+	g_conns++;
 }
 
 uint8_t tb_on_write(uint16_t handle, const uint8_t *data, uint16_t len)
@@ -308,7 +316,10 @@ static void up(unsigned int acl_len, unsigned int credits)
 
 static void connect(void)
 {
+	int conns = g_conns;
+
 	rx(TB_HCI_EVT, "3e13 01 00 0100 01 01 aabbccddeeff 1800 0000 4800 00");
+	CHECK(g_conns == conns + 1 && !memcmp(g_peer, "\x01\xaa\xbb\xcc\xdd\xee\xff", 7));
 	EXPECT_NONE();
 }
 
@@ -344,8 +355,14 @@ static void test_init_and_adv(void)
 	EXPECT_NONE();
 
 	/* Connecting stops legacy advertising in the controller; the link
-	 * going down starts it again. */
+	 * going down starts it again. A failed connection, or a second one
+	 * while linked, reaches no hook. */
+	g_conns = 0;
+	rx(TB_HCI_EVT, "3e13 01 3e 0100 01 01 aabbccddeeff 1800 0000 4800 00");
+	CHECK(g_conns == 0);
 	connect();
+	rx(TB_HCI_EVT, "3e13 01 00 0200 01 00 112233445566 1800 0000 4800 00");
+	CHECK(g_conns == 1 && g_peer[0] == 0x01);
 	rx(TB_HCI_EVT, "0504 00 0100 13");
 	CHECK(g_discs == 1 && g_disc_reason == 0x13);
 	EXPECT(TB_HCI_CMD, "0a2001 01");

@@ -315,9 +315,11 @@ static void evt(const uint8_t *p, uint16_t n)
 			s.credits = s.credits_max;
 		}
 		break;
-	case 0x3E: /* LE Connection Complete: subevent, status, handle, ... */
+	case 0x3E: /* LE Connection Complete: subevent, status, handle, role,
+		    * peer address type and address, ... */
 		if (p[1] >= 19u && p[2] == 0x01u && !p[3] && s.conn == NO_CONN) {
 			link_up(get16(p + 4) & 0x0FFFu);
+			tb_on_connect(p + 7);
 		}
 		break;
 	default:

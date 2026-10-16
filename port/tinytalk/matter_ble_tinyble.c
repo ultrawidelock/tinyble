@@ -247,6 +247,14 @@ void tb_on_indicated(int err)
 	(void)pump_tx();
 }
 
+/* Every link, not only the one that writes C1: a peer that connects and never
+ * writes shows up nowhere else. The address as bt_addr_le_to_str() prints it. */
+void tb_on_connect(const uint8_t peer[7])
+{
+	LOG_INF("BLE connected: %02X:%02X:%02X:%02X:%02X:%02X (%s)", peer[6], peer[5], peer[4],
+		peer[3], peer[2], peer[1], (peer[0] & 1u) ? "random" : "public");
+}
+
 void tb_on_disconnect(uint8_t reason)
 {
 	LOG_INF("BLE disconnected (0x%02x)", reason);

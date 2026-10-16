@@ -144,6 +144,10 @@ uint32_t tb_port_ms(void);
 
 /** Controller ready (0), or an init command failed (negated HCI status). */
 void tb_on_ready(int err);
+/** A link came up (LE Connection Complete; the enhanced one stays masked).
+ *  @p peer is the peer's address type (0 public, 1 random), then its address,
+ *  least significant byte first; valid only during the call. */
+void tb_on_connect(const uint8_t peer[7]);
 /** A write to a TB_A_W attribute, request or command. Return 0 or an ATT
  *  error code; @p data is valid only during the call. */
 uint8_t tb_on_write(uint16_t handle, const uint8_t *data, uint16_t len);
