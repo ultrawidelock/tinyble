@@ -187,5 +187,6 @@ to the iPhone.
   app, discover, subscribe C2, write C1 and expect it back; watch
   `tb_rx_dropped` (0 means every PDU reassembled) and whether 2
   event buffers and 1 ACL TX buffer keep up.
-- M3: `samples/door-lock` builds and the adapter test passes. Still to do
-  on the bench: Thread attaches (the M3 gate), then M4's Apple Home runs.
+- M3: passed on the bench (RESEARCH.md "M3 bench"): commissioned into Apple
+  Home, Thread attached, lock and unlock work. One inbound packet was
+  dropped, cause not yet traced. Next: M4's 10 Apple Home runs.

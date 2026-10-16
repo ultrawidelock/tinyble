@@ -406,3 +406,20 @@ gate. Compared with tinytalk's own door-lock at the same commit plus
   half the window, a drop mid-send, a sequence error, all through 27 B ACL
   packets. 250 checks pass; starting our sequence at 0 instead of 1 failed 7
   of the first 197.
+
+### M3 bench (2026-10-16)
+
+`build/m3-tb` (door-lock on tinyble, 27 B data length, reassembly) on the
+DWM3001CDK, one Apple Home commissioning, console drained over RTT
+(`trace/rtt_drain.py`, up-buffer 0). Passed the M3 gate:
+
+- BTP up at fragment 182 B, ATT MTU 185 B; PASE completed, so multi-packet
+  C1 writes reassembled.
+- Thread attached 1,281 ms after AddNOC on the commissioner's dataset; SRP
+  registered; CASE over Thread; the iPhone closed BLE (0x13).
+- Apple Home added a second fabric over Thread; lock and unlock from Home
+  drove the LED and reported to both subscriptions.
+- `tb_rx_dropped` read 1 afterwards (0x2000db66 in this build). Which packet
+  is unknown: the console does not log drops. The default build also counts
+  SMP and unknown-CID PDUs here. A run with `trace/monitor.conf` (raw HCI
+  feeds the monitor, `hci_raw.c:167`) would name it.
