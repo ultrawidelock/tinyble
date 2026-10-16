@@ -13,6 +13,7 @@
 #include <tinyble/tinyble.h>
 
 static K_FIFO_DEFINE(rx_fifo);
+static K_MUTEX_DEFINE(lock);
 static struct net_buf *tx; /* the last tb_port_tx_alloc() buffer */
 
 uint8_t *tb_port_tx_alloc(uint8_t type, uint16_t len)
@@ -54,4 +55,47 @@ void tb_zephyr_wait(void)
 		tb_hci_rx(buf->data[0], buf->data + 1, (uint16_t)(buf->len - 1u));
 		net_buf_unref(buf);
 	}
+}
+
+static struct k_work_poll rx_work;
+static struct k_poll_event rx_evt =
+	K_POLL_EVENT_STATIC_INITIALIZER(K_POLL_TYPE_FIFO_DATA_AVAILABLE, K_POLL_MODE_NOTIFY_ONLY,
+					&rx_fifo, 0);
+
+static int arm(uint32_t next)
+{
+	return k_work_poll_submit(&rx_work, &rx_evt, 1,
+				  next == UINT32_MAX ? K_FOREVER : K_MSEC(next));
+}
+
+static void rx_work_fn(struct k_work *work)
+{
+	struct net_buf *buf;
+	uint32_t next;
+
+	ARG_UNUSED(work);
+	tb_zephyr_lock();
+	while ((buf = k_fifo_get(&rx_fifo, K_NO_WAIT)) != NULL) {
+		tb_hci_rx(buf->data[0], buf->data + 1, (uint16_t)(buf->len - 1u));
+		net_buf_unref(buf);
+	}
+	next = tb_poll();
+	tb_zephyr_unlock();
+	(void)arm(next);
+}
+
+int tb_zephyr_start(void)
+{
+	k_work_poll_init(&rx_work, rx_work_fn);
+	return arm(0);
+}
+
+void tb_zephyr_lock(void)
+{
+	(void)k_mutex_lock(&lock, K_FOREVER);
+}
+
+void tb_zephyr_unlock(void)
+{
+	(void)k_mutex_unlock(&lock);
 }
