@@ -14,6 +14,7 @@
 #include <soc.h>
 #include <zephyr/kernel.h>
 
+#include <tinyble/tb_dfu.h>
 #include <tinyble/tb_matter.h>
 #include <tinyble/tb_tinytalk.h>
 #include <tinyble/tb_zephyr.h>
@@ -159,6 +160,39 @@ void matter_commission_readvertise(void)
 {
 	g_readv++;
 }
+
+/* ---- tinyfota's side ------------------------------------------------------------ */
+
+#if defined(CONFIG_TINYBLE_TINYFOTA)
+static int g_dfu_writes, g_dfu_cccs, g_dfu_discs, g_dfu_echo;
+static uint16_t g_dfu_h, g_dfu_len, g_dfu_ccc_h, g_dfu_ccc_v;
+static uint8_t g_dfu_data[256], g_dfu_err, g_dfu_reason;
+
+uint8_t tb_dfu_on_write(uint16_t handle, const uint8_t *data, uint16_t len)
+{
+	g_dfu_h = handle;
+	g_dfu_len = len;
+	memcpy(g_dfu_data, data, len);
+	g_dfu_writes++;
+	if (g_dfu_echo) {
+		CHECK(tb_notify(handle, data, len) == 0);
+	}
+	return g_dfu_err;
+}
+
+void tb_dfu_on_ccc(uint16_t handle, uint16_t value)
+{
+	g_dfu_ccc_h = handle;
+	g_dfu_ccc_v = value;
+	g_dfu_cccs++;
+}
+
+void tb_dfu_on_disconnect(uint8_t reason)
+{
+	g_dfu_reason = reason;
+	g_dfu_discs++;
+}
+#endif
 
 /* ---- HCI helpers ------------------------------------------------------------- */
 
@@ -649,6 +683,82 @@ static void test_advert_after_link(void)
 	CHECK(g_adv_en == 1 && g_readv == 0);
 }
 
+#if defined(CONFIG_TINYBLE_TINYFOTA)
+/* tinyfota's values go to its hooks, both write kinds and both CCCs, and
+ * claim nothing of Matter's; C1 and C2 never reach them; every disconnect
+ * does, used for DFU or not. */
+static void test_dfu(void)
+{
+	static const uint8_t k_smp_ccc[] = {0x12, (uint8_t)TB_DFU_H_SMP + 1u, 0x00, 0x01, 0x00};
+	static const uint8_t k_nat_ccc[] = {0x52, (uint8_t)TB_DFU_H_NATIVE + 1u, 0x00, 0x01, 0x00};
+	static const uint8_t k_smp_cmd[] = {0x52, (uint8_t)TB_DFU_H_SMP, 0x00, 0x01, 0x02, 0x03};
+	static const uint8_t k_smp_req[] = {0x12, (uint8_t)TB_DFU_H_SMP, 0x00, 0x04};
+	static const uint8_t k_nat_cmd[] = {0x52, (uint8_t)TB_DFU_H_NATIVE, 0x00, 0x05, 0x06};
+	static const uint8_t k_nat_req[] = {0x12, (uint8_t)TB_DFU_H_NATIVE, 0x00, 0xAA, 0xBB};
+	uint8_t pdu[260];
+
+	g_dfu_writes = g_dfu_cccs = g_dfu_discs = 0;
+	start();
+
+	/* CCCs: a request's after its response, a command's at once. */
+	att_in(k_smp_ccc, sizeof(k_smp_ccc));
+	CHECK(att_out(pdu) == 1 && pdu[0] == 0x13);
+	CHECK(g_dfu_cccs == 1 && g_dfu_ccc_h == TB_DFU_H_SMP && g_dfu_ccc_v == 1);
+	att_in(k_nat_ccc, sizeof(k_nat_ccc));
+	CHECK(att_out(pdu) == 0);
+	CHECK(g_dfu_cccs == 2 && g_dfu_ccc_h == TB_DFU_H_NATIVE && g_dfu_ccc_v == 1);
+
+	/* Writes, the bytes as sent; a command gets nothing back. */
+	att_in(k_smp_cmd, sizeof(k_smp_cmd));
+	CHECK(att_out(pdu) == 0);
+	CHECK(g_dfu_writes == 1 && g_dfu_h == TB_DFU_H_SMP && g_dfu_len == 3 &&
+	      !memcmp(g_dfu_data, k_smp_cmd + 3, 3));
+	att_in(k_smp_req, sizeof(k_smp_req));
+	CHECK(att_out(pdu) == 1 && pdu[0] == 0x13);
+	CHECK(g_dfu_writes == 2 && g_dfu_h == TB_DFU_H_SMP && g_dfu_len == 1 &&
+	      g_dfu_data[0] == 0x04);
+	att_in(k_nat_cmd, sizeof(k_nat_cmd));
+	CHECK(att_out(pdu) == 0);
+	CHECK(g_dfu_writes == 3 && g_dfu_h == TB_DFU_H_NATIVE && g_dfu_len == 2 &&
+	      !memcmp(g_dfu_data, k_nat_cmd + 3, 2));
+	att_in(k_nat_req, sizeof(k_nat_req));
+	CHECK(att_out(pdu) == 1 && pdu[0] == 0x13);
+	CHECK(g_dfu_writes == 4 && g_dfu_h == TB_DFU_H_NATIVE && g_dfu_len == 2 &&
+	      !memcmp(g_dfu_data, k_nat_req + 3, 2));
+	g_dfu_err = 0x81;
+	att_in(k_nat_req, sizeof(k_nat_req));
+	CHECK(att_out(pdu) == 5 && pdu[0] == 0x01 && pdu[1] == 0x12 && pdu[4] == 0x81);
+	g_dfu_err = 0;
+
+	/* A reply notified from the hook, ahead of the request's response. */
+	g_dfu_echo = 1;
+	att_in(k_nat_req, sizeof(k_nat_req));
+	CHECK(att_out(pdu) == 5 && pdu[0] == 0x1B && pdu[1] == (uint8_t)TB_DFU_H_NATIVE &&
+	      pdu[3] == 0xAA && pdu[4] == 0xBB);
+	CHECK(att_out(pdu) == 1 && pdu[0] == 0x13);
+	att_in(k_smp_cmd, sizeof(k_smp_cmd));
+	CHECK(att_out(pdu) == 6 && pdu[0] == 0x1B && pdu[1] == (uint8_t)TB_DFU_H_SMP &&
+	      !memcmp(pdu + 3, k_smp_cmd + 3, 3));
+	g_dfu_echo = 0;
+	CHECK(run_work() == 0 && g_links == 0 && g_msgs == 0);
+
+	/* Matter's side is Matter's. */
+	handshake_write();
+	subscribe();
+	settle();
+	CHECK(g_ind == 1 && g_links == 1);
+	CHECK(g_dfu_writes == 7 && g_dfu_cccs == 2);
+
+	evt("0504000100" "13");
+	settle();
+	CHECK(g_dfu_discs == 1 && g_dfu_reason == 0x13);
+	start();
+	evt("0504000100" "08");
+	settle();
+	CHECK(g_dfu_discs == 2 && g_dfu_reason == 0x08 && g_dfu_writes == 7);
+}
+#endif
+
 int main(void)
 {
 	test_advert();
@@ -659,6 +769,9 @@ int main(void)
 	test_idle_acks();
 	test_request_while_indicating();
 	test_advert_after_link();
+#if defined(CONFIG_TINYBLE_TINYFOTA)
+	test_dfu();
+#endif
 	printf("%s %d\n", g_fail ? "FAIL" : "PASS", g_pass);
 	return g_fail != 0;
 }

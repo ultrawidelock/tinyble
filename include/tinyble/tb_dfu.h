@@ -17,7 +17,8 @@
  *
  * tinyble's tinytalk adapter (port/tinytalk/matter_ble_tinyble.c) calls the
  * hooks in tinyble's one context: on Zephyr the system work queue, with
- * tb_zephyr_lock() held.
+ * tb_zephyr_lock() held, so they must not wait on a lock that a thread
+ * calling tb_zephyr_lock() may hold.
  *
  * Replies go out with tb_notify() on the value written, at most tb_mtu() - 3
  * bytes, once the peer has turned notifications on. Nothing is queued:

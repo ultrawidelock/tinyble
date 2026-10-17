@@ -10,6 +10,10 @@
  * from other threads, so it takes the port lock; the three tinytalk callbacks
  * run from cb_work without it, because they take tinytalk's lock, which a
  * thread waiting on ours in matter_ble_send() holds.
+ *
+ * With CONFIG_TINYBLE_TINYFOTA, tinyfota's two values (tb_dfu.h) are its own:
+ * their writes and CCC writes, and every disconnect, go to its hooks, called
+ * directly, with the port lock held.
  */
 #include <errno.h>
 #include <string.h>
@@ -18,6 +22,7 @@
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 
+#include <tinyble/tb_dfu.h>
 #include <tinyble/tb_matter.h>
 #include <tinyble/tb_tinytalk.h>
 #include <tinyble/tb_zephyr.h>
@@ -196,7 +201,8 @@ void tb_on_ready(int err)
 	}
 }
 
-/* C1 is the table's only writable value. */
+/* C1 is the table's only writable value, tinyfota's two aside: those never
+ * claim the link. */
 uint8_t tb_on_write(uint16_t handle, const uint8_t *data, uint16_t len)
 {
 	struct matter_btp_handshake_req req;
@@ -204,6 +210,11 @@ uint8_t tb_on_write(uint16_t handle, const uint8_t *data, uint16_t len)
 	size_t n = 0;
 	int rc;
 
+#if defined(CONFIG_TINYBLE_TINYFOTA)
+	if (handle == TB_DFU_H_SMP || handle == TB_DFU_H_NATIVE) {
+		return tb_dfu_on_write(handle, data, len);
+	}
+#endif
 	ARG_UNUSED(handle);
 	if (!s_claimed) {
 		s_claimed = true;
@@ -256,6 +267,11 @@ uint8_t tb_on_write(uint16_t handle, const uint8_t *data, uint16_t len)
 
 void tb_on_ccc(uint16_t handle, uint16_t value)
 {
+#if defined(CONFIG_TINYBLE_TINYFOTA)
+	if (handle == TB_DFU_H_SMP || handle == TB_DFU_H_NATIVE) {
+		tb_dfu_on_ccc(handle, value);
+	}
+#endif
 	if (handle == TB_MATTER_H_C2 && (value & 2u)) {
 		send_hs();
 	}
@@ -291,6 +307,9 @@ void tb_on_disconnect(uint8_t reason)
 		s_claimed = false;
 		reset_link();
 	}
+#if defined(CONFIG_TINYBLE_TINYFOTA)
+	tb_dfu_on_disconnect(reason);
+#endif
 	/* tinyble advertises again as last asked: matter_ble.h's "repeats the
 	 * last request". Asking tinytalk again here judged the advert while a
 	 * fail-safe fabric still existed, stopped it, and nothing restarted it

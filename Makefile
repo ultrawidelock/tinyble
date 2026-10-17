@@ -74,13 +74,18 @@ ADAPTER := $(SRCS) port/tinytalk/matter_ble_tinyble.c tests/tinytalk/test_adapte
 	$(TINYTALK)/src/matter_btp.c
 ADAPTER_DEFS := -DCONFIG_TINYTALK_VENDOR_ID=0xFFF1 -DCONFIG_TINYTALK_PRODUCT_ID=0x8001 \
 	-DCONFIG_TINYTALK_DISCRIMINATOR=0xF00
+# Then with CONFIG_TINYBLE_TINYFOTA, as zephyr/CMakeLists.txt builds it.
+ADAPTER_DFU := -DCONFIG_TINYBLE_TINYFOTA=1 -DTB_MATTER_DFU=1 -DTB_FIND_BY_TYPE=1
 
 adapter:
 	@test -n "$(TINYTALK)" || { echo "make adapter TINYTALK=<a tinytalk tree>"; exit 1; }
 	@mkdir -p $(BUILD)
 	$(CC) $(CSTD) $(WARN) $(SAN) $(ADAPTER_DEFS) $(INCS) -Itests/tinytalk/stub \
 		-I$(TINYTALK)/include $(ADAPTER) -o $(BUILD)/test_adapter
+	$(CC) $(CSTD) $(WARN) $(SAN) $(ADAPTER_DEFS) $(ADAPTER_DFU) $(INCS) -Itests/tinytalk/stub \
+		-I$(TINYTALK)/include $(ADAPTER) -o $(BUILD)/test_adapter_dfu
 	$(BUILD)/test_adapter
+	$(BUILD)/test_adapter_dfu
 
 # text + data is flash, data + bss is RAM, summed over tinyble's objects.
 size: $(SRCS) $(HDRS)

@@ -9,6 +9,17 @@ config TINYBLE_MATTER_GATT
 	depends on TINYBLE
 	default y
 
+config TINYBLE_TINYFOTA
+	bool "tinyfota's DFU services in the Matter table"
+	depends on TINYBLE_MATTER_GATT
+	help
+	  SMP and tinyfota's native DFU service after the Matter services, at
+	  the handles in include/tinyble/tb_dfu.h, and Find By Type Value,
+	  which clients send to find a service by its UUID. With
+	  TINYBLE_TINYTALK the adapter hands their writes, their CCC writes
+	  and every disconnect to tb_dfu_on_write(), tb_dfu_on_ccc() and
+	  tb_dfu_on_disconnect(), which the DFU transport provides.
+
 config TINYBLE_TINYTALK
 	bool "tinytalk's BLE transport (matter_ble.h) on tinyble"
 	depends on TINYBLE_MATTER_GATT && TINYTALK && !TINYTALK_BLE
