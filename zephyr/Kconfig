@@ -26,6 +26,18 @@ config TINYBLE_TINYTALK
 	select TINYTALK_HAS_BLE
 	select POLL
 
+config TINYBLE_TINYTALK_SCAN_RSP_UUID128
+	string "128-bit service UUID for the scan response"
+	depends on TINYBLE_TINYTALK
+	default ""
+	help
+	  Sent in the scan response whenever the adapter advertises, as one
+	  Complete List of 128-bit Service UUIDs (AD type 0x07, 18 B): for
+	  example 8d53dc1d-1db7-4cd3-868b-8a527460aa84, SMP's service, for
+	  clients that look for it before connecting. Written as 32 hex
+	  digits, hyphens allowed; anything else stops the build. Empty, the
+	  default, sends no scan response and builds no code for one.
+
 if TINYBLE_TINYTALK
 module = TINYBLE_TINYTALK
 module-str = tinyble tinytalk adapter (DBG: BTP seq, ack, indications)

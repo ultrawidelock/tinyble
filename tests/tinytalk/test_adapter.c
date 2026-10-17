@@ -201,6 +201,15 @@ void tb_dfu_on_disconnect(uint8_t reason)
 static uint8_t g_adv[31];
 static uint8_t g_adv_len;
 static int g_adv_en = -1; /* the last LE Set Advertising Enable */
+static uint8_t g_sd[31];
+static uint8_t g_sd_len;
+static int g_sds, g_sds_at_en; /* scan responses set: all, and by the last enable */
+
+#ifdef TB_TINYTALK_SCAN_RSP_UUID128
+#define ADV_CMDS 3 /* data, scan response, enable */
+#else
+#define ADV_CMDS 2
+#endif
 
 static void cc(uint16_t op, const uint8_t *ret, uint8_t n)
 {
@@ -225,8 +234,14 @@ static int answer_cmds(void)
 			g_adv_len = b[3];
 			memcpy(g_adv, b + 4, sizeof(g_adv));
 		}
+		if (op == 0x2009) {
+			g_sd_len = b[3];
+			memcpy(g_sd, b + 4, sizeof(g_sd));
+			g_sds++;
+		}
 		if (op == 0x200A) {
 			g_adv_en = b[3];
+			g_sds_at_en = g_sds;
 		}
 		if (op == 0x0406) {
 			continue; /* Disconnect: no Command Complete */
@@ -431,6 +446,7 @@ static void start(void)
 	g_rsp_err = 0;
 	g_reply_len = 0;
 	g_pseq = 0;
+	g_sds = 0;
 	matter_btp_rx_init(&g_prx, g_prx_buf, sizeof(g_prx_buf), 1u);
 	matter_ble_set_msg_handler(on_msg);
 	matter_ble_set_link_handler(on_link);
@@ -443,7 +459,7 @@ static void start(void)
 	}
 	CHECK(answer_cmds() == 5);
 	CHECK(matter_ble_advertise(true) == 0);
-	CHECK(answer_cmds() == 2);
+	CHECK(answer_cmds() == ADV_CMDS);
 	connect();
 	att_in(k_mtu, sizeof(k_mtu));
 	CHECK(att_out(pdu) == 3 && pdu[0] == 0x03);
@@ -461,6 +477,26 @@ static void test_advert(void)
 
 	start();
 	CHECK(g_adv_len == sizeof(k_want) && !memcmp(g_adv, k_want, sizeof(k_want)));
+#ifdef TB_TINYTALK_SCAN_RSP_UUID128
+	{
+		/* The SMP service UUID, set before the enable; again with each
+		 * advert, and not when it stops. */
+		static const uint8_t k_sd[] = {0x11, 0x07, 0x84, 0xAA, 0x60, 0x74, 0x52, 0x8A,
+					       0x8B, 0x86, 0xD3, 0x4C, 0xB7, 0x1D, 0x1D, 0xDC,
+					       0x53, 0x8D};
+
+		CHECK(g_sd_len == sizeof(k_sd) && !memcmp(g_sd, k_sd, sizeof(k_sd)));
+		CHECK(g_sds == 1 && g_sds_at_en == 1);
+		CHECK(matter_ble_advertise(true) == 0);
+		answer_cmds();
+		CHECK(g_sds == 2);
+		CHECK(matter_ble_advertise(false) == -EBUSY);
+		answer_cmds();
+		CHECK(g_sds == 2);
+	}
+#else
+	CHECK(g_sds == 0);
+#endif
 	matter_ble_set_discriminator(0x123);
 	CHECK(matter_ble_discriminator() == 0x123);
 	CHECK(matter_ble_advertise(true) == 0);

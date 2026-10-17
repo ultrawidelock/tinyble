@@ -74,8 +74,10 @@ ADAPTER := $(SRCS) port/tinytalk/matter_ble_tinyble.c tests/tinytalk/test_adapte
 	$(TINYTALK)/src/matter_btp.c
 ADAPTER_DEFS := -DCONFIG_TINYTALK_VENDOR_ID=0xFFF1 -DCONFIG_TINYTALK_PRODUCT_ID=0x8001 \
 	-DCONFIG_TINYTALK_DISCRIMINATOR=0xF00
-# Then with CONFIG_TINYBLE_TINYFOTA, as zephyr/CMakeLists.txt builds it.
-ADAPTER_DFU := -DCONFIG_TINYBLE_TINYFOTA=1 -DTB_MATTER_DFU=1 -DTB_FIND_BY_TYPE=1
+# Then with CONFIG_TINYBLE_TINYFOTA and the SMP UUID in the scan response, as
+# zephyr/CMakeLists.txt builds them.
+ADAPTER_DFU := -DCONFIG_TINYBLE_TINYFOTA=1 -DTB_MATTER_DFU=1 -DTB_FIND_BY_TYPE=1 -DTB_SCAN_RSP=1 \
+	-DTB_TINYTALK_SCAN_RSP_UUID128=0x84,0xAA,0x60,0x74,0x52,0x8A,0x8B,0x86,0xD3,0x4C,0xB7,0x1D,0x1D,0xDC,0x53,0x8D
 
 adapter:
 	@test -n "$(TINYTALK)" || { echo "make adapter TINYTALK=<a tinytalk tree>"; exit 1; }

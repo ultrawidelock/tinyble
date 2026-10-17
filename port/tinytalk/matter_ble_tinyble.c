@@ -56,6 +56,12 @@ static uint8_t s_ad[] = {0x02, 0x01, 0x06, 0x0B, 0x16, 0xF6, 0xFF, 0x00, 0x00, 0
 			 CONFIG_TINYTALK_VENDOR_ID & 0xFFu, CONFIG_TINYTALK_VENDOR_ID >> 8,
 			 CONFIG_TINYTALK_PRODUCT_ID & 0xFFu, CONFIG_TINYTALK_PRODUCT_ID >> 8, 0x00};
 
+#ifdef TB_TINYTALK_SCAN_RSP_UUID128
+/* One Complete List of 128-bit Service UUIDs: CONFIG_TINYBLE_TINYTALK_SCAN_RSP_UUID128,
+ * which zephyr/CMakeLists.txt turns into bytes. */
+static const uint8_t s_sd[] = {0x11, 0x07, TB_TINYTALK_SCAN_RSP_UUID128};
+#endif
+
 /* tinytalk callbacks owed, run by cb_work. */
 #define CB_TX   BIT(0)
 #define CB_LINK BIT(1)
@@ -376,6 +382,11 @@ int matter_ble_advertise(bool on)
 	tb_zephyr_lock();
 	s_ad[8] = (uint8_t)d;
 	s_ad[9] = (uint8_t)((d >> 8) & 0x0Fu);
+#ifdef TB_TINYTALK_SCAN_RSP_UUID128
+	if (on) {
+		tb_scan_rsp(s_sd, sizeof(s_sd));
+	}
+#endif
 	tb_adv(s_ad, on ? sizeof(s_ad) : 0u);
 	rc = !on && s_linked ? -EBUSY : 0;
 	tb_zephyr_unlock();
