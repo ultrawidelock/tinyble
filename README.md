@@ -41,6 +41,7 @@ tests both ways.
 | `TB_SIG_REJECT` | Command Reject for unknown signaling | ignored |
 | `TB_SMP_REFUSE` | Pairing Failed, Pairing Not Supported, to any SMP PDU | dropped, counted in `tb_rx_dropped` |
 | `TB_ATT_TIMEOUT` | 30 s without a confirmation fails the indication and drops the link | the indication waits for its confirmation or the link |
+| `TB_SCAN_RSP` | `tb_scan_rsp()`: LE Set Scan Response Data, ahead of the advertising enable | not built |
 
 ## Zephyr port
 
@@ -125,14 +126,49 @@ west build -b decawave_dwm3001cdk -d <build dir> <tinylock>/door-lock -- \
   -DCONF_FILE="prj.conf;stacks/tinyble.conf;stacks/openthread.conf;stacks/nrf-security.conf"
 ```
 
+## tinyfota
+
+`CONFIG_TINYBLE_TINYFOTA=y` puts SMP and tinyfota's native DFU service in
+the Matter table, so signed updates (SMP for `tinyfota push` and phone apps,
+or tinyfota's own framing) share the image with commissioning. They follow
+C2's CCC at 0x0011, so no Matter handle moves; `include/tinyble/tb_dfu.h`
+holds the new ones:
+
+| Handle | Attribute |
+|---|---|
+| 0x0012 | SMP service 8D53DC1D-1DB7-4CD3-868B-8A527460AA84 |
+| 0x0014 | its value DA2E7828-FBCE-4E01-AE9E-261174997C48: Write Without Response, Notify; CCC at 0x0015 |
+| 0x0016 | native DFU service D3B5A140-9E23-4B3A-8BE4-6B1EE5F980A3 |
+| 0x0018 | its value D3B5A141-9E23-4B3A-8BE4-6B1EE5F980A3: Write, Write Without Response, Notify; CCC at 0x0019 |
+
+The option also turns on `TB_FIND_BY_TYPE`: CoreBluetooth and phone apps
+find a service by its UUID with Find By Type Value. The adapter hands
+writes and CCC writes on the two values, and every disconnect, to the
+transport's `tb_dfu_on_write()`, `tb_dfu_on_ccc()` and
+`tb_dfu_on_disconnect()`, before BTP sees them; replies go out with
+`tb_notify()`. `CONFIG_TINYBLE_TINYTALK_SCAN_RSP_UUID128` (empty by
+default) puts one 128-bit service UUID in the scan response whenever the
+adapter advertises, through `tb_scan_rsp()`.
+
+Door-lock with `stacks/tinyble.conf`, `stacks/tinygrid.conf` and
+`stacks/tinypsa.conf`, the three hooks as empty stubs: tinylock b33f550,
+tinytalk 4e14cfc, tinygrid b8e3b4a, tinypsa d556143, tinyble 708c112, LTO,
+measured 2026-10-17 on `decawave_dwm3001cdk`:
+
+| | Flash (B) | RAM (B) |
+|---|---:|---:|
+| option off (as tinyble 93eb8b3) | 207,144 | 69,592 |
+| `CONFIG_TINYBLE_TINYFOTA=y` | 207,420 | 69,592 |
+| and the SMP UUID in the scan response | 207,492 | 69,592 |
+
 ## Commands
 
 | Command | What it does |
 |---|---|
-| `make test` | Host tests against a fake controller, options off and on |
+| `make test` | Host tests against a fake controller: options off, on, and as `CONFIG_TINYBLE_TINYFOTA` builds them |
 | `make asan` | The same under AddressSanitizer and UndefinedBehaviorSanitizer |
 | `make size ARM_CC=<arm-gcc>` | Cortex-M4 size; fails over 5,291 B flash or 760 B RAM |
-| `make adapter TINYTALK=<tree>` | The tinytalk adapter against a scripted phone, tinytalk's BTP codec, sanitizers |
+| `make adapter TINYTALK=<tree>` | The tinytalk adapter against a scripted phone, tinytalk's BTP codec, sanitizers; then again with `CONFIG_TINYBLE_TINYFOTA` and a scan response |
 
 On macOS, where `cc` may be a toolchain shim, pass `CC=/usr/bin/clang`.
 
@@ -141,6 +177,7 @@ On macOS, where `cc` may be a toolchain shim, pass `CC=/usr/bin/clang`.
 ```
 include/tinyble/tinyble.h   API, port seams, application hooks, table format
 include/tinyble/tb_matter.h handles in the Matter table
+include/tinyble/tb_dfu.h    tinyfota's handles and hooks
 src/tinyble.c               HCI, L2CAP fixed channels, ATT server
 src/tb_matter_gatt.c        the Matter commissioning GATT table
 include/tinyble/tb_zephyr.h Zephyr port API
@@ -168,7 +205,8 @@ trace/                      M0: HCI monitor overlay, RTT drainer, btsnoop conver
 4. Link-time hooks, not callback tables. No threads, no locks: the port
    serializes every call.
 5. Eight HCI commands: event masks, LE Read Buffer Size, random address,
-   advertising parameters, data, enable, Disconnect.
+   advertising parameters, data, enable, Disconnect. A ninth, scan response
+   data, with `TB_SCAN_RSP`.
 
 ## Where it differs from the Zephyr host
 
@@ -197,3 +235,7 @@ to the iPhone.
 - M3: passed on the bench (RESEARCH.md "M3 bench"): commissioned into Apple
   Home, Thread attached, lock and unlock work. One inbound packet was
   dropped, cause not yet traced. Next: M4's 10 Apple Home runs.
+- tinyfota: host tests only, no bench run. tinyble never indicates Service
+  Changed, so a client that kept the Matter-only table across the update
+  sees the DFU services only once it discovers again. `tb_notify()` has no
+  completion hook: the transport retries `TB_EBUSY` on its own timer.
