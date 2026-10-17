@@ -25,9 +25,12 @@ ARM_FLAGS := -std=c11 -Os -mcpu=cortex-m4 -mthumb -mabi=aapcs -ffunction-section
 SIZE_FLASH_MAX := 5291
 SIZE_RAM_MAX := 760
 
-# Every optional behaviour on (tinyble.h); the tests run both ways.
+# Every optional behaviour on (tinyble.h); the tests run off, on, and as DFU.
 FULL := -DTB_FIND_BY_TYPE=1 -DTB_READ_BLOB=1 -DTB_TYPE128=1 -DTB_SIG_REJECT=1 \
 	-DTB_SMP_REFUSE=1 -DTB_ATT_TIMEOUT=1 -DTB_SCAN_RSP=1
+# CONFIG_TINYBLE_TINYFOTA as the door-lock builds it (zephyr/CMakeLists.txt):
+# tinyfota's services in the table, Find By Type Value, a scan response.
+DFU := -DTB_MATTER_DFU=1 -DTB_FIND_BY_TYPE=1 -DTB_SCAN_RSP=1
 
 .PHONY: test asan adapter size clean
 
@@ -39,6 +42,10 @@ $(BUILD)/test_full: $(SRCS) $(TESTS) $(HDRS)
 	@mkdir -p $(@D)
 	$(CC) $(CSTD) $(WARN) $(FULL) $(INCS) $(SRCS) $(TESTS) -o $@
 
+$(BUILD)/test_dfu: $(SRCS) $(TESTS) $(HDRS)
+	@mkdir -p $(@D)
+	$(CC) $(CSTD) $(WARN) $(DFU) $(INCS) $(SRCS) $(TESTS) -o $@
+
 $(BUILD)/test_asan: $(SRCS) $(TESTS) $(HDRS)
 	@mkdir -p $(@D)
 	$(CC) $(CSTD) $(WARN) $(SAN) $(INCS) $(SRCS) $(TESTS) -o $@
@@ -47,13 +54,19 @@ $(BUILD)/test_asan_full: $(SRCS) $(TESTS) $(HDRS)
 	@mkdir -p $(@D)
 	$(CC) $(CSTD) $(WARN) $(SAN) $(FULL) $(INCS) $(SRCS) $(TESTS) -o $@
 
-test: $(BUILD)/test $(BUILD)/test_full
+$(BUILD)/test_asan_dfu: $(SRCS) $(TESTS) $(HDRS)
+	@mkdir -p $(@D)
+	$(CC) $(CSTD) $(WARN) $(SAN) $(DFU) $(INCS) $(SRCS) $(TESTS) -o $@
+
+test: $(BUILD)/test $(BUILD)/test_full $(BUILD)/test_dfu
 	$(BUILD)/test
 	$(BUILD)/test_full
+	$(BUILD)/test_dfu
 
-asan: $(BUILD)/test_asan $(BUILD)/test_asan_full
+asan: $(BUILD)/test_asan $(BUILD)/test_asan_full $(BUILD)/test_asan_dfu
 	$(BUILD)/test_asan
 	$(BUILD)/test_asan_full
+	$(BUILD)/test_asan_dfu
 
 # port/tinytalk against tinytalk's BTP codec, Zephyr stubbed:
 # make adapter TINYTALK=<a tinytalk tree>

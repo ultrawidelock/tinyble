@@ -11,6 +11,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <tinyble/tb_dfu.h>
 #include <tinyble/tb_matter.h>
 #include <tinyble/tinyble.h>
 
@@ -126,6 +127,7 @@ static int g_discs;
 static int g_order; /* tb_on_indicated before tb_on_disconnect */
 static uint8_t g_peer[7];
 static int g_conns;
+static int g_notify_on_write;
 
 void tb_on_ready(int err)
 {
@@ -144,6 +146,9 @@ uint8_t tb_on_write(uint16_t handle, const uint8_t *data, uint16_t len)
 	g_write_len = len;
 	memcpy(g_write_data, data, len);
 	g_writes++;
+	if (g_notify_on_write) {
+		CHECK(tb_notify(handle, data, len) == 0);
+	}
 	return g_write_err;
 }
 
@@ -405,6 +410,12 @@ static void test_init_and_adv(void)
 	EXPECT(TB_HCI_CMD, "012008 0100000000000000");
 }
 
+/* tinyfota's UUIDs, little endian (tb_dfu.h). */
+#define SMP_SVC "84aa6074528a8b86d34cb71d1ddc538d"
+#define SMP_CHR "487c997411269eae014ecefb28782eda"
+#define NAT_SVC "a380f9e51e6be48b3a4b239e40a1b5d3"
+#define NAT_CHR "a380f9e51e6be48b3a4b239e41a1b5d3"
+
 #if TB_SCAN_RSP
 static void test_scan_rsp(void)
 {
@@ -462,16 +473,28 @@ static void test_discovery(void)
 	ATT_IN("10 0100 ffff 0028");
 	ATT_OUT("11 06 0100 0400 0118 0500 0b00 0018 0c00 1100 f6ff");
 	ATT_IN("10 1200 ffff 0028");
+#if TB_MATTER_DFU
+	ATT_OUT("11 14 1200 1500 " SMP_SVC " 1600 1900 " NAT_SVC);
+#else
 	ATT_OUT("01 10 1200 0a");
+#endif
 
 	/* Characteristics: 16-bit declarations, then the 128-bit pair. */
 	ATT_IN("08 0100 ffff 0328");
 	ATT_OUT("09 07 0200 200300052a 0600 020700002a 0800 020900012a 0a00 020b00042a");
 	ATT_IN("08 0b00 ffff 0328");
+#if TB_MATTER_DFU
+	ATT_OUT("09 15 0d00 0c0e00 119d9f429c4f9f9559453d26f52eee18"
+		"      0f00 201000 129d9f429c4f9f9559453d26f52eee18"
+		"      1300 141400 " SMP_CHR " 1700 1c1800 " NAT_CHR);
+	ATT_IN("08 1000 ffff 0328");
+	ATT_OUT("09 15 1300 141400 " SMP_CHR " 1700 1c1800 " NAT_CHR);
+#else
 	ATT_OUT("09 15 0d00 0c0e00 119d9f429c4f9f9559453d26f52eee18"
 		"      0f00 201000 129d9f429c4f9f9559453d26f52eee18");
 	ATT_IN("08 1000 ffff 0328");
 	ATT_OUT("01 08 1000 0a");
+#endif
 
 	/* Descriptors; a format change ends a reply. */
 	ATT_IN("04 1100 1100");
@@ -481,7 +504,11 @@ static void test_discovery(void)
 	ATT_IN("04 0e00 1100");
 	ATT_OUT("05 02 0e00 119d9f429c4f9f9559453d26f52eee18");
 	ATT_IN("04 1200 ffff");
+#if TB_MATTER_DFU
+	ATT_OUT("05 01 1200 0028 1300 0328");
+#else
 	ATT_OUT("01 04 1200 0a");
+#endif
 
 #if TB_FIND_BY_TYPE
 	/* Find By Type Value: the 0xFFF6 service and its group end. */
@@ -1017,6 +1044,177 @@ static void test_notify(void)
 	EXPECT_NONE();
 }
 
+#if TB_MATTER_DFU
+/* tinyfota's services after the Matter ones: 128-bit services, discovery by
+ * UUID, both values written both ways, notified at Apple's MTU. */
+static void test_dfu(void)
+{
+	static uint8_t big[183];
+	uint8_t pdu[260];
+	char hex[2 * 185 + 1];
+
+	for (size_t i = 0; i < sizeof(big); i++) {
+		big[i] = (uint8_t)(i ^ 0x5A);
+	}
+	g_writes = 0;
+	g_cccs = 0;
+	up(251, 3);
+	connect();
+
+	/* MTU 23: a 128-bit service fills a group reply alone, and never shares
+	 * one with a 16-bit service; nor a 128-bit declaration. */
+	ATT_IN("10 0c00 ffff 0028");
+	ATT_OUT("11 06 0c00 1100 f6ff");
+	ATT_IN("10 1200 ffff 0028");
+	ATT_OUT("11 14 1200 1500 " SMP_SVC);
+	ATT_IN("10 1600 ffff 0028");
+	ATT_OUT("11 14 1600 1900 " NAT_SVC);
+	ATT_IN("10 1a00 ffff 0028");
+	ATT_OUT("01 10 1a00 0a");
+	ATT_IN("08 1200 1900 0328");
+	ATT_OUT("09 15 1300 141400 " SMP_CHR);
+
+	/* Apple's MTU, 185 B. */
+	ATT_IN("02 b900");
+	ATT_OUT("03 f700");
+	CHECK(tb_mtu() == 185);
+	ATT_IN("10 0100 ffff 0028");
+	ATT_OUT("11 06 0100 0400 0118 0500 0b00 0018 0c00 1100 f6ff");
+	ATT_IN("10 1200 ffff 0028");
+	ATT_OUT("11 14 1200 1500 " SMP_SVC " 1600 1900 " NAT_SVC);
+	ATT_IN("10 1200 1700 0028"); /* group end bounded by the request */
+	ATT_OUT("11 14 1200 1500 " SMP_SVC " 1600 1700 " NAT_SVC);
+
+	/* Find By Type Value, by which CoreBluetooth and phone apps filter
+	 * discovery: 128-bit and 16-bit service UUIDs, same width only. */
+	ATT_IN("06 0100 ffff 0028 " SMP_SVC);
+	ATT_OUT("07 1200 1500");
+	ATT_IN("06 1600 ffff 0028 " SMP_SVC);
+	ATT_OUT("01 06 1600 0a");
+	ATT_IN("06 0100 ffff 0028 " NAT_SVC);
+	ATT_OUT("07 1600 1900");
+	ATT_IN("06 0100 ffff 0028 0018");
+	ATT_OUT("07 0500 0b00");
+	ATT_IN("06 0100 ffff 0028 f6ff");
+	ATT_OUT("07 0c00 1100");
+	ATT_IN("06 0100 ffff 0028 " SMP_CHR); /* a characteristic, not a service */
+	ATT_OUT("01 06 0100 0a");
+	ATT_IN("06 0100 ffff 0028 84aa"); /* SMP's first 2 B */
+	ATT_OUT("01 06 0100 0a");
+
+	/* Characteristics of each service: declaration, properties, handle. */
+	ATT_IN("08 1200 1500 0328");
+	ATT_OUT("09 15 1300 141400 " SMP_CHR);
+	ATT_IN("08 1400 1500 0328");
+	ATT_OUT("01 08 1400 0a");
+	ATT_IN("08 1600 1900 0328");
+	ATT_OUT("09 15 1700 1c1800 " NAT_CHR);
+	ATT_IN("08 1800 1900 0328");
+	ATT_OUT("01 08 1800 0a");
+	ATT_IN("0a 1300");
+	ATT_OUT("0b 141400 " SMP_CHR);
+	ATT_IN("0a 1600");
+	ATT_OUT("0b " NAT_SVC);
+	ATT_IN("0a 1400"); /* the values are write only */
+	ATT_OUT("01 0a 1400 02");
+
+	/* Descriptors: a 16-bit and a 128-bit type never share a reply. */
+	ATT_IN("04 1200 1900");
+	ATT_OUT("05 01 1200 0028 1300 0328");
+	ATT_IN("04 1400 1900");
+	ATT_OUT("05 02 1400 " SMP_CHR);
+	ATT_IN("04 1500 1900");
+	ATT_OUT("05 01 1500 0229 1600 0028 1700 0328");
+	ATT_IN("04 1800 1900");
+	ATT_OUT("05 02 1800 " NAT_CHR);
+	ATT_IN("04 1900 1900");
+	ATT_OUT("05 01 1900 0229");
+	ATT_IN("04 1a00 ffff");
+	ATT_OUT("01 04 1a00 0a");
+
+	/* The CCCs: a request's hook fires after its response, a command's at
+	 * once; each CCC holds its own value. */
+	CHECK(tb_notify(TB_DFU_H_SMP, big, 1) == TB_EAGAIN);
+	ATT_IN("12 1500 0100");
+	CHECK(g_cccs == 1 && g_ccc_h == TB_DFU_H_SMP && g_ccc_v == 1 && g_ccc_seen_rsp);
+	ATT_OUT("13");
+	ATT_IN("52 1900 0100");
+	CHECK(g_cccs == 2 && g_ccc_h == TB_DFU_H_NATIVE && g_ccc_v == 1);
+	EXPECT_NONE();
+	ATT_IN("0a 1500");
+	ATT_OUT("0b 0100");
+	ATT_IN("0a 1900");
+	ATT_OUT("0b 0100");
+	ATT_IN("0a 1100");
+	ATT_OUT("0b 0000");
+
+	/* Write Command and Write Request on both values reach the hook. */
+	ATT_IN("52 1400 0102030405");
+	CHECK(g_writes == 1 && g_write_h == TB_DFU_H_SMP && g_write_len == 5 &&
+	      !memcmp(g_write_data, "\x01\x02\x03\x04\x05", 5));
+	EXPECT_NONE();
+	ATT_IN("12 1400 aabb");
+	CHECK(g_writes == 2 && g_write_h == TB_DFU_H_SMP && g_write_len == 2 &&
+	      g_write_data[1] == 0xBB);
+	ATT_OUT("13");
+	ATT_IN("52 1800 cc");
+	CHECK(g_writes == 3 && g_write_h == TB_DFU_H_NATIVE && g_write_len == 1 &&
+	      g_write_data[0] == 0xCC);
+	EXPECT_NONE();
+	ATT_IN("12 1800 ddeeff");
+	CHECK(g_writes == 4 && g_write_h == TB_DFU_H_NATIVE && g_write_len == 3 &&
+	      g_write_data[2] == 0xFF);
+	ATT_OUT("13");
+	g_write_err = 0x80;
+	ATT_IN("12 1800 00");
+	ATT_OUT("01 12 1800 80");
+	g_write_err = 0;
+	/* MTU - 3 B, as an SMP client writes. */
+	pdu[0] = 0x52;
+	pdu[1] = (uint8_t)TB_DFU_H_SMP;
+	pdu[2] = 0;
+	memcpy(pdu + 3, big, 182);
+	tohex(hex, pdu, 185);
+	ATT_IN(hex);
+	CHECK(g_writes == 6 && g_write_h == TB_DFU_H_SMP && g_write_len == 182 &&
+	      !memcmp(g_write_data, big, 182));
+	EXPECT_NONE();
+
+	/* Notifications up to MTU - 3 on each value; neither indicates. */
+	CHECK(tb_notify(TB_DFU_H_SMP, big, 183) == TB_EINVAL);
+	CHECK(tb_notify(TB_DFU_H_SMP, big, 182) == 0);
+	CHECK(pop_pdu(pdu, 251) == 189 && pdu[4] == 0x1B && pdu[5] == 0x14 && pdu[6] == 0 &&
+	      !memcmp(pdu + 7, big, 182));
+	nocp(1);
+	CHECK(tb_notify(TB_DFU_H_NATIVE, big, 182) == 0);
+	CHECK(pop_pdu(pdu, 251) == 189 && pdu[4] == 0x1B && pdu[5] == 0x18 && pdu[6] == 0 &&
+	      !memcmp(pdu + 7, big, 182));
+	nocp(1);
+	CHECK(tb_indicate(TB_DFU_H_SMP, big, 1) == TB_EAGAIN);
+	CHECK(tb_notify(0x0019, big, 1) == TB_EAGAIN);
+
+	/* A reply notified from the write hook goes ahead of the response. */
+	g_notify_on_write = 1;
+	ATT_IN("12 1800 01");
+	ATT_OUT("1b 1800 01");
+	ATT_OUT("13");
+	ATT_IN("52 1400 02");
+	ATT_OUT("1b 1400 02");
+	g_notify_on_write = 0;
+
+	/* Off again, the other CCC untouched, and off on the next link. */
+	ATT_IN("12 1500 0000");
+	ATT_OUT("13");
+	CHECK(tb_notify(TB_DFU_H_SMP, big, 1) == TB_EAGAIN);
+	CHECK(tb_notify(TB_DFU_H_NATIVE, k_hs, 3) == 0);
+	ATT_OUT("1b 1800 656c04");
+	rx(TB_HCI_EVT, "0504 00 0100 13");
+	connect();
+	CHECK(tb_notify(TB_DFU_H_NATIVE, big, 1) == TB_EAGAIN);
+	EXPECT_NONE();
+}
+#endif
+
 /* Random ACL and events: no crash, no oversized or malformed packet out. */
 static void test_random(void)
 {
@@ -1086,6 +1284,9 @@ int main(void)
 	test_scan_rsp();
 #endif
 	test_discovery();
+#if TB_MATTER_DFU
+	test_dfu();
+#endif
 	test_mtu23_fill();
 	test_errors();
 	test_writes_and_indications();
