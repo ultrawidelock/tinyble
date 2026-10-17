@@ -54,8 +54,11 @@
 
 /* HCI commands owed, sent lowest bit first, one at a time. Bits 0 to 4 are
  * the init sequence. */
-enum { C_EVT_MASK, C_LE_EVT_MASK, C_LE_BUF, C_RAND_ADDR, C_ADV_PARAMS, C_ADV_DATA, C_ADV_EN,
-       C_DISC };
+enum { C_EVT_MASK, C_LE_EVT_MASK, C_LE_BUF, C_RAND_ADDR, C_ADV_PARAMS, C_ADV_DATA,
+#if TB_SCAN_RSP
+       C_SCAN_RSP, /* ahead of the enable */
+#endif
+       C_ADV_EN, C_DISC };
 /* ACL PDUs owed, sent lowest bit first while the controller has buffers. */
 enum { P_ATT, P_SMP, P_REJ, P_CPUR, P_IND };
 
@@ -78,6 +81,9 @@ static struct {
 	uint8_t inside;        /* depth of tb_* calls; the outermost one pumps */
 	uint8_t adv_on;        /* what the controller is doing */
 	uint8_t adv_len;
+#if TB_SCAN_RSP
+	uint8_t sd_len;
+#endif
 	uint8_t ident;         /* last signaling identifier we used */
 #if TB_SIG_REJECT
 	uint8_t rej_ident;
@@ -96,6 +102,9 @@ static struct {
 	uint16_t ccc_v;
 	uint16_t ind_h, ind_len;
 	const uint8_t *adv;
+#if TB_SCAN_RSP
+	const uint8_t *sd;
+#endif
 	const uint8_t *ind_data;
 	uint32_t cpur_at;
 #if TB_ATT_TIMEOUT
@@ -156,8 +165,16 @@ static void leave(void)
 /* ---- HCI commands --------------------------------------------------------- */
 
 static const uint16_t k_op[] = {0x0C01u, 0x2001u, 0x2002u, 0x2005u,
-				 0x2006u, 0x2008u, 0x200Au, 0x0406u};
-static const uint8_t k_plen[] = {8, 8, 0, 6, 15, 32, 1, 3};
+				 0x2006u, 0x2008u,
+#if TB_SCAN_RSP
+				 0x2009u,
+#endif
+				 0x200Au, 0x0406u};
+static const uint8_t k_plen[] = {8, 8, 0, 6, 15, 32,
+#if TB_SCAN_RSP
+				 32,
+#endif
+				 1, 3};
 
 static void cmd(void)
 {
@@ -205,6 +222,12 @@ static void cmd(void)
 		p[0] = s.adv_len;
 		memcpy(p + 1, s.adv, s.adv_len);
 		break;
+#if TB_SCAN_RSP
+	case C_SCAN_RSP:
+		p[0] = s.sd_len;
+		memcpy(p + 1, s.sd, s.sd_len);
+		break;
+#endif
 	case C_ADV_EN:
 		p[0] = (uint8_t)on;
 		s.adv_on = (uint8_t)on;
@@ -861,6 +884,17 @@ void tb_adv(const uint8_t *ad, uint8_t len)
 	s.cmds |= (uint16_t)(BIT(C_ADV_EN) | (len ? BIT(C_ADV_DATA) : 0u));
 	leave();
 }
+
+#if TB_SCAN_RSP
+void tb_scan_rsp(const uint8_t *sd, uint8_t len)
+{
+	enter();
+	s.sd = sd;
+	s.sd_len = len > 31u ? 31u : len;
+	s.cmds |= BIT(C_SCAN_RSP);
+	leave();
+}
+#endif
 
 /* Linked, and the CCC after value @p handle has @p bit (1 notify, 2 indicate). */
 static int subscribed(uint16_t handle, unsigned int bit)

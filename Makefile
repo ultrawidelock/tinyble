@@ -27,7 +27,7 @@ SIZE_RAM_MAX := 760
 
 # Every optional behaviour on (tinyble.h); the tests run both ways.
 FULL := -DTB_FIND_BY_TYPE=1 -DTB_READ_BLOB=1 -DTB_TYPE128=1 -DTB_SIG_REJECT=1 \
-	-DTB_SMP_REFUSE=1 -DTB_ATT_TIMEOUT=1
+	-DTB_SMP_REFUSE=1 -DTB_ATT_TIMEOUT=1 -DTB_SCAN_RSP=1
 
 .PHONY: test asan adapter size clean
 

@@ -405,6 +405,50 @@ static void test_init_and_adv(void)
 	EXPECT(TB_HCI_CMD, "012008 0100000000000000");
 }
 
+#if TB_SCAN_RSP
+static void test_scan_rsp(void)
+{
+	/* One Complete List of 128-bit Service UUIDs: SMP's service. */
+	static const uint8_t k_sd[] = {0x11, 0x07, 0x84, 0xAA, 0x60, 0x74, 0x52, 0x8A, 0x8B, 0x86,
+				       0xD3, 0x4C, 0xB7, 0x1D, 0x1D, 0xDC, 0x53, 0x8D};
+
+	up(251, 3);
+
+	/* Asked for after the advert, set before the enable. */
+	tb_adv(k_ad, sizeof(k_ad));
+	tb_scan_rsp(k_sd, sizeof(k_sd));
+	EXPECT(TB_HCI_CMD, "082020 0f 020106 0b16f6ff00000ff1ff018000 00000000000000000000000000000000");
+	cc(0x2008, "");
+	EXPECT(TB_HCI_CMD, "092020 12 1107 84aa6074528a8b86d34cb71d1ddc538d 0000000000 0000000000 000000");
+	cc(0x2009, "");
+	EXPECT(TB_HCI_CMD, "0a2001 01");
+	cc(0x200A, "");
+	EXPECT_NONE();
+
+	/* A change while advertising goes alone. Nothing is queued: two calls
+	 * while a command is out send the last one once. */
+	tb_scan_rsp(k_sd, 2);
+	EXPECT(TB_HCI_CMD, "092020 02 1107 00000000000000000000 00000000000000000000 000000000000000000");
+	tb_scan_rsp(k_sd, 0);
+	tb_scan_rsp(k_sd, sizeof(k_sd));
+	EXPECT_NONE();
+	cc(0x2009, "");
+	EXPECT(TB_HCI_CMD, "092020 12 1107 84aa6074528a8b86d34cb71d1ddc538d 0000000000 0000000000 000000");
+	cc(0x2009, "");
+	EXPECT_NONE();
+
+	/* The controller keeps it across a link; zero clears it. */
+	connect();
+	rx(TB_HCI_EVT, "0504 00 0100 13");
+	EXPECT(TB_HCI_CMD, "0a2001 01");
+	cc(0x200A, "");
+	tb_scan_rsp(NULL, 0);
+	EXPECT(TB_HCI_CMD, "092020 00 00000000000000000000 00000000000000000000 0000000000000000000000");
+	cc(0x2009, "");
+	EXPECT_NONE();
+}
+#endif
+
 static void test_discovery(void)
 {
 	up(251, 3);
@@ -1038,6 +1082,9 @@ static void test_random(void)
 int main(void)
 {
 	test_init_and_adv();
+#if TB_SCAN_RSP
+	test_scan_rsp();
+#endif
 	test_discovery();
 	test_mtu23_fill();
 	test_errors();

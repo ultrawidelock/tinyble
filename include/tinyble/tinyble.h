@@ -44,6 +44,9 @@ extern "C" {
 #ifndef TB_ATT_TIMEOUT
 #define TB_ATT_TIMEOUT 0 /* 30 s indication timeout; off: wait for the link */
 #endif
+#ifndef TB_SCAN_RSP
+#define TB_SCAN_RSP 0 /* tb_scan_rsp(); off: no scan response data, not built */
+#endif
 
 /* Error returns. The values are Zephyr's errno numbers, so a Zephyr adapter
  * can pass them through. */
@@ -111,6 +114,13 @@ uint32_t tb_poll(void);
  * A zero @p len stops advertising.
  */
 void tb_adv(const uint8_t *ad, uint8_t len);
+
+/**
+ * Scan response data (TB_SCAN_RSP), at most 31 B: sent ahead of the
+ * advertising enable, and again on every call, advertising or not. @p sd is
+ * borrowed until the next tb_scan_rsp() call. A zero @p len clears it.
+ */
+void tb_scan_rsp(const uint8_t *sd, uint8_t len);
 
 /**
  * Indicate @p len bytes on characteristic value @p handle. @p data is borrowed
