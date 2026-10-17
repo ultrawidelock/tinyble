@@ -166,6 +166,7 @@ void matter_commission_readvertise(void)
 
 static uint8_t g_adv[31];
 static uint8_t g_adv_len;
+static int g_adv_en = -1; /* the last LE Set Advertising Enable */
 
 static void cc(uint16_t op, const uint8_t *ret, uint8_t n)
 {
@@ -189,6 +190,9 @@ static int answer_cmds(void)
 		if (op == 0x2008) {
 			g_adv_len = b[3];
 			memcpy(g_adv, b + 4, sizeof(g_adv));
+		}
+		if (op == 0x200A) {
+			g_adv_en = b[3];
 		}
 		if (op == 0x0406) {
 			continue; /* Disconnect: no Command Complete */
@@ -283,6 +287,7 @@ static uint8_t g_hs[8];     /* the handshake response */
 static int g_hs_len;
 static int g_got;           /* messages the phone reassembled */
 static int g_hold;          /* do not confirm indications */
+static uint8_t g_packed;    /* the newest of the phone's fragments we acked */
 
 /* Take everything sent: count responses, feed indications to the phone and
  * confirm them. Then run the work queue, and again until nothing moves. */
@@ -309,6 +314,9 @@ static void settle(void)
 					int rc = matter_btp_rx_fragment(&g_prx, pdu + 3, n - 3u);
 
 					CHECK(rc == MATTER_OK || rc == MATTER_END);
+					if (g_prx.got_ack) {
+						g_packed = g_prx.ack;
+					}
 					if (rc == MATTER_END) {
 						g_got++;
 						CHECK(g_prx.len == g_reply_len &&
@@ -355,6 +363,25 @@ static void phone_send(const uint8_t *msg, size_t len)
 		settle();
 	}
 	g_pseq = tx.next_seq;
+}
+
+/* The phone acknowledges what it has received, as a standalone ack: CHIP
+ * sends one within 2.5 s of an unacked fragment and expects ours for it
+ * within 15 s (BLEEndPoint.cpp, BTP_ACK_SEND_TIMEOUT_MS, BTP_ACK_TIMEOUT_MS). */
+static void phone_ack(void)
+{
+	uint8_t b[3];
+	size_t n = 0;
+
+	CHECK(matter_btp_standalone_ack(g_prx.last_seq, g_pseq++, b, sizeof(b), &n) == MATTER_OK);
+	write_c1(b, (uint16_t)n);
+	settle();
+}
+
+/* Every fragment the phone has sent is acknowledged. */
+static int phone_all_acked(void)
+{
+	return g_packed == (uint8_t)(g_pseq - 1u);
 }
 
 /* Up, advertising, connected at MTU 185, nothing else. */
@@ -450,10 +477,12 @@ static void test_write_then_subscribe(void)
 	CHECK(g_txs == 1 && g_tx_status == 0);
 	CHECK(matter_ble_send(g_reply, 0) == -EINVAL);
 
-	/* The link drops: tinytalk hears it, and is asked to readvertise. */
+	/* The link drops: tinytalk hears it, and the advert comes back as last
+	 * asked for, without asking tinytalk again (matter_ble.h). */
+	g_adv_en = -1;
 	evt("0504000100" "13");
 	settle();
-	CHECK(g_links == 2 && g_readv == 1);
+	CHECK(g_links == 2 && g_readv == 0 && g_adv_en == 1);
 	CHECK(matter_ble_send(msg, 1) == -ENOTCONN);
 }
 
@@ -519,6 +548,107 @@ static void test_desync(void)
 	settle();
 }
 
+/* The board run of 2026-10-17: ConnectNetwork answered about 2 s after the
+ * request, then nothing, and the phone dropped the link 15 s later. Every
+ * fragment the phone sends, its standalone acks included, is acknowledged
+ * without waiting for more traffic. */
+static void test_idle_acks(void)
+{
+	static const uint8_t k_req[] = {0x11, 0x22, 0x33};
+
+	start();
+	handshake_write();
+	subscribe();
+	settle();
+	g_pseq = 0;
+	g_packed = 0xFF;
+
+	/* A request with no immediate answer: acked by itself. */
+	phone_send(k_req, sizeof(k_req));
+	CHECK(g_msgs == 1 && phone_all_acked());
+	/* The phone acks that ack; that is acked too. */
+	phone_ack();
+	CHECK(phone_all_acked());
+
+	/* Seconds later the response; the phone acks it, and is acked. */
+	for (size_t i = 0; i < 60u; i++) {
+		g_reply[i] = (uint8_t)(i + 1u);
+	}
+	g_reply_len = 60;
+	CHECK(matter_ble_send(g_reply, g_reply_len) == 0);
+	settle();
+	CHECK(g_got == 1 && g_txs == 1 && g_tx_status == 0);
+	phone_ack();
+	CHECK(phone_all_acked());
+	evt("0504000100" "13");
+	settle();
+}
+
+/* A request that lands while our last fragment waits for its confirmation:
+ * its ack goes out once the confirmation frees the link, though nothing
+ * else is left to carry it. */
+static void test_request_while_indicating(void)
+{
+	static const uint8_t k_cfm[] = {0x1E};
+	static const uint8_t k_req[] = {0x44, 0x55};
+	struct matter_btp_tx tx;
+	uint8_t frag[MATTER_BTP_MAX_FRAGMENT];
+	size_t n = 0;
+
+	start();
+	handshake_write();
+	subscribe();
+	settle();
+	g_pseq = 0;
+	g_packed = 0xFF;
+	phone_send(k_req, sizeof(k_req));
+	CHECK(g_msgs == 1 && phone_all_acked());
+
+	/* The answer goes out; its confirmation is held. */
+	for (size_t i = 0; i < 40u; i++) {
+		g_reply[i] = (uint8_t)(i * 3u);
+	}
+	g_reply_len = 40;
+	g_hold = 1;
+	CHECK(matter_ble_send(g_reply, g_reply_len) == 0);
+	settle();
+	CHECK(g_got == 1 && g_txs == 0);
+
+	/* The next request arrives before the confirmation. */
+	CHECK(matter_btp_tx_init(&tx, k_req, sizeof(k_req), MTU - 3u, g_pseq) == MATTER_OK);
+	CHECK(matter_btp_tx_next(&tx, NULL, frag, sizeof(frag), &n) == MATTER_OK);
+	g_pseq = tx.next_seq;
+	write_c1(frag, (uint16_t)n);
+	g_hold = 0;
+	g_reply_len = 0;
+	att_in(k_cfm, 1);
+	settle();
+	CHECK(g_msgs == 2 && g_txs == 1 && g_tx_status == 0);
+	CHECK(phone_all_acked());
+	evt("0504000100" "13");
+	settle();
+}
+
+/* Stopped while linked (CASE established over Thread): the advert stays off
+ * after the link drops. Never stopped (the fail-safe expired, no fabric):
+ * it comes back on, and stays on, with no readvertise needed. */
+static void test_advert_after_link(void)
+{
+	start();
+	CHECK(matter_ble_advertise(false) == -EBUSY);
+	answer_cmds();
+	g_adv_en = -1;
+	evt("0504000100" "13");
+	settle();
+	CHECK(g_adv_en == -1 && g_readv == 0);
+
+	start();
+	g_adv_en = -1;
+	evt("0504000100" "13");
+	settle();
+	CHECK(g_adv_en == 1 && g_readv == 0);
+}
+
 int main(void)
 {
 	test_advert();
@@ -526,6 +656,9 @@ int main(void)
 	test_subscribe_then_write();
 	test_drop_mid_send();
 	test_desync();
+	test_idle_acks();
+	test_request_while_indicating();
+	test_advert_after_link();
 	printf("%s %d\n", g_fail ? "FAIL" : "PASS", g_pass);
 	return g_fail != 0;
 }

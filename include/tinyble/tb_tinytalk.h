@@ -18,6 +18,6 @@
  * - The 0xFFF6 service is in tinyble's const table, so it is never withdrawn.
  *   matter_ble_advertise(false) stops the advert and returns -EBUSY while a
  *   link is up, as the Zephyr port does, 0 otherwise.
- * - tinyble readvertises by itself after a link drops; a disconnect also
- *   calls matter_commission_readvertise().
+ * - tinyble readvertises by itself after a link drops, as last asked; a
+ *   disconnect does not call matter_commission_readvertise().
  */

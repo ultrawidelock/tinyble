@@ -23,9 +23,8 @@
 #include <tinyble/tb_zephyr.h>
 #include <tinyble/tinyble.h>
 #include <tinytalk/matter_btp.h>
-#include <tinytalk/matter_commission.h>
 
-LOG_MODULE_REGISTER(tb_tinytalk, LOG_LEVEL_INF);
+LOG_MODULE_REGISTER(tb_tinytalk, CONFIG_TINYBLE_TINYTALK_LOG_LEVEL);
 
 BUILD_ASSERT(MATTER_BLE_API == 1, "port/tinytalk follows matter_ble.h version 1");
 
@@ -55,7 +54,6 @@ static uint8_t s_ad[] = {0x02, 0x01, 0x06, 0x0B, 0x16, 0xF6, 0xFF, 0x00, 0x00, 0
 /* tinytalk callbacks owed, run by cb_work. */
 #define CB_TX   BIT(0)
 #define CB_LINK BIT(1)
-#define CB_ADV  BIT(2)
 #define CB_MSG  BIT(3)
 static uint8_t s_cb;
 static int s_tx_status;
@@ -80,9 +78,6 @@ static void cb_work_fn(struct k_work *work)
 	}
 	if ((cb & CB_LINK) && s_link_cb) {
 		s_link_cb();
-	}
-	if (cb & CB_ADV) {
-		matter_commission_readvertise();
 	}
 	if (cb & CB_MSG) {
 		/* Both run on this queue, so no fragment lands mid-handler. */
@@ -128,8 +123,32 @@ static int indicate(size_t n)
 {
 	int rc = tb_indicate(TB_MATTER_H_C2, s_frag, (uint16_t)n);
 
+	LOG_DBG("C2 indicate %u B, flags 0x%02x: %d", (unsigned int)n, s_frag[0], rc);
 	s_busy = rc == 0;
 	return rc;
+}
+
+/*
+ * What we owe the peer, as a standalone ack, when no fragment of ours will
+ * carry it. CHIP acks every fragment it receives, its standalone acks
+ * included, within 2.5 s and drops the link when one of its own goes 15 s
+ * unacked (BLEEndPoint.cpp: BTP_ACK_SEND_TIMEOUT_MS, BTP_ACK_TIMEOUT_MS).
+ * Held while the handshake response still occupies s_frag.
+ */
+static void send_ack(void)
+{
+	size_t n = 0;
+
+	if (!s_ack_pending || s_tx_active || s_busy || s_hs_len ||
+	    matter_btp_standalone_ack(s_ack_seq, s_tx_seq, s_frag, sizeof(s_frag), &n) != MATTER_OK) {
+		return;
+	}
+	LOG_DBG("BTP ack %u, seq %u", s_ack_seq, s_tx_seq);
+	if (indicate(n) == 0) {
+		s_tx_seq++;
+		s_ack_pending = false;
+		s_unacked = 0u;
+	}
 }
 
 /* The response waits for the subscription: an iPhone writes C1 first. */
@@ -160,6 +179,8 @@ static int pump_tx(void)
 		return rc;
 	}
 	/* Sequence and piggybacked ack count only once the fragment is taken. */
+	LOG_DBG("BTP seq %u%s, ack %d", s_tx_seq, s_tx.off == s_tx.len ? " end" : "",
+		s_ack_pending ? s_ack_seq : -1);
 	s_tx_seq = s_tx.next_seq;
 	s_ack_pending = false;
 	s_unacked = 0u;
@@ -206,6 +227,8 @@ uint8_t tb_on_write(uint16_t handle, const uint8_t *data, uint16_t len)
 		return 0;
 	}
 	rc = matter_btp_rx_fragment(&s_rx, data, len);
+	LOG_DBG("C1 %u B, flags 0x%02x: %d, seq %u, ack %d", len, len ? data[0] : 0u, rc,
+		s_rx.last_seq, s_rx.got_ack ? s_rx.ack : -1);
 	if (rc != MATTER_OK && rc != MATTER_END) {
 		/* BTP cannot recover a gap. */
 		LOG_ERR("BTP fragment refused (%d)", rc);
@@ -221,14 +244,12 @@ uint8_t tb_on_write(uint16_t handle, const uint8_t *data, uint16_t len)
 		s_msg_len = s_rx.len;
 		owe(CB_MSG);
 	}
-	/* Ack at half the window or a whole message, or the peer stalls. A
-	 * fragment going out carries the ack instead. */
-	if (!s_tx_active && !s_busy && (rc == MATTER_END || s_unacked >= WINDOW / 2u) &&
-	    matter_btp_standalone_ack(s_ack_seq, s_tx_seq, s_frag, sizeof(s_frag), &n) == MATTER_OK &&
-	    indicate(n) == 0) {
-		s_tx_seq++;
-		s_ack_pending = false;
-		s_unacked = 0u;
+	/* Ack at half the window, a whole message or a standalone ack, or the
+	 * peer stalls or times out. A fragment going out carries the ack
+	 * instead; tb_on_indicated() sends any still owed. */
+	if (rc == MATTER_END || s_unacked >= WINDOW / 2u ||
+	    !(data[0] & (MATTER_BTP_FLAG_START | MATTER_BTP_FLAG_CONTINUE | MATTER_BTP_FLAG_END))) {
+		send_ack();
 	}
 	return 0;
 }
@@ -242,12 +263,14 @@ void tb_on_ccc(uint16_t handle, uint16_t value)
 
 void tb_on_indicated(int err)
 {
+	LOG_DBG("C2 confirmed: %d", err);
 	s_busy = false;
 	if (err) {
 		tx_done(-EIO);
 		return;
 	}
 	(void)pump_tx();
+	send_ack();
 }
 
 /* Every link, not only the one that writes C1: a peer that connects and never
@@ -268,7 +291,10 @@ void tb_on_disconnect(uint8_t reason)
 		s_claimed = false;
 		reset_link();
 	}
-	owe(CB_ADV);
+	/* tinyble advertises again as last asked: matter_ble.h's "repeats the
+	 * last request". Asking tinytalk again here judged the advert while a
+	 * fail-safe fabric still existed, stopped it, and nothing restarted it
+	 * when the fail-safe expired. */
 }
 
 /* ---- matter_ble.h ----------------------------------------------------------- */

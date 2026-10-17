@@ -14,3 +14,9 @@ config TINYBLE_TINYTALK
 	depends on TINYBLE_MATTER_GATT && TINYTALK && !TINYTALK_BLE
 	select TINYTALK_HAS_BLE
 	select POLL
+
+if TINYBLE_TINYTALK
+module = TINYBLE_TINYTALK
+module-str = tinyble tinytalk adapter (DBG: BTP seq, ack, indications)
+source "subsys/logging/Kconfig.template.log_config"
+endif

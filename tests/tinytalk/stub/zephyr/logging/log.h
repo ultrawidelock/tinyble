@@ -8,6 +8,7 @@ static inline void log_stub(const char *fmt, ...)
 }
 
 #define LOG_MODULE_REGISTER(...)
+#define LOG_DBG(...) log_stub(__VA_ARGS__)
 #define LOG_INF(...) log_stub(__VA_ARGS__)
 #define LOG_WRN(...) log_stub(__VA_ARGS__)
 #define LOG_ERR(...) log_stub(__VA_ARGS__)
