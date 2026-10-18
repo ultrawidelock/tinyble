@@ -24,7 +24,7 @@ arm-zephyr-eabi-gcc 12.2, `-Os`, Cortex-M4, no LTO, optional behaviour off
 
 Of the RAM, 502 B is one L2CAP PDU buffer each way. Built as one translation
 unit, which is what LTO sees, tinyble is 2,815 B flash; with every option on,
-3,263 B per file and 3,223 B as one unit (measured the same day). In the M2 image, below, the Zephyr build itself
+3,670 B per file and 3,634 B as one unit (measured 2026-10-18). In the M2 image, below, the Zephyr build itself
 measures the host side.
 
 ## Optional behaviour
@@ -42,6 +42,7 @@ tests both ways.
 | `TB_SMP_REFUSE` | Pairing Failed, Pairing Not Supported, to any SMP PDU | dropped, counted in `tb_rx_dropped` |
 | `TB_ATT_TIMEOUT` | 30 s without a confirmation fails the indication and drops the link | the indication waits for its confirmation or the link |
 | `TB_SCAN_RSP` | `tb_scan_rsp()`: LE Set Scan Response Data, ahead of the advertising enable | not built |
+| `TB_SERVICE_CHANGED` | `tb_service_changed()`: a handle range indicated on Service Changed to every peer that turns its indications on | not built |
 
 ## Zephyr port
 
@@ -150,6 +151,19 @@ transport's `tb_dfu_on_write()`, `tb_dfu_on_ccc()` and
 default) puts one 128-bit service UUID in the scan response whenever the
 adapter advertises, through `tb_scan_rsp()`.
 
+Phones cache a GATT table across connections, so one that knew the device
+before these services were in its table would use the old handles and
+never see them. The option turns on `TB_SERVICE_CHANGED` for that:
+`tb_service_changed(TB_DFU_H_FIRST, TB_DFU_H_LAST)`, called by the
+transport on the first boot after the update that added them (or with
+0x0001 to 0xFFFF when the old layout is unknown), makes tinyble indicate
+the range on Service Changed to every peer that turns its indications on,
+until reset. The peer then rediscovers those handles and
+nothing else. The range survives `tb_init()`, so the call can come before
+`matter_ble_start()`. An indication of the application's asked for
+meanwhile goes out after the confirmation. On tinyble's objects it costs
+184 B flash and 4 B RAM.
+
 Door-lock with `stacks/tinyble.conf`, `stacks/tinygrid.conf` and
 `stacks/tinypsa.conf`, the three hooks as empty stubs: tinylock b33f550,
 tinytalk 4e14cfc, tinygrid b8e3b4a, tinypsa d556143, tinyble 708c112, LTO,
@@ -235,7 +249,11 @@ to the iPhone.
 - M3: passed on the bench (RESEARCH.md "M3 bench"): commissioned into Apple
   Home, Thread attached, lock and unlock work. One inbound packet was
   dropped, cause not yet traced. Next: M4's 10 Apple Home runs.
-- tinyfota: host tests only, no bench run. tinyble never indicates Service
-  Changed, so a client that kept the Matter-only table across the update
-  sees the DFU services only once it discovers again. `tb_notify()` has no
-  completion hook: the transport retries `TB_EBUSY` on its own timer.
+- tinyfota: host tests only, no bench run. tinyble indicates Service
+  Changed once the transport calls `tb_service_changed()`; tinyfota does
+  not yet, because its image cannot tell a first boot after an update
+  (MCUboot erases the staging partition after applying). Until it can,
+  which its v0.3 confirm and rollback work needs anyway, a client that
+  kept the Matter-only table across the update sees the DFU services only
+  once it discovers again. `tb_notify()` has no completion hook: the
+  transport retries `TB_EBUSY` on its own timer.

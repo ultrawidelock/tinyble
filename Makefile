@@ -27,10 +27,11 @@ SIZE_RAM_MAX := 760
 
 # Every optional behaviour on (tinyble.h); the tests run off, on, and as DFU.
 FULL := -DTB_FIND_BY_TYPE=1 -DTB_READ_BLOB=1 -DTB_TYPE128=1 -DTB_SIG_REJECT=1 \
-	-DTB_SMP_REFUSE=1 -DTB_ATT_TIMEOUT=1 -DTB_SCAN_RSP=1
+	-DTB_SMP_REFUSE=1 -DTB_ATT_TIMEOUT=1 -DTB_SCAN_RSP=1 -DTB_SERVICE_CHANGED=1
 # CONFIG_TINYBLE_TINYFOTA as the door-lock builds it (zephyr/CMakeLists.txt):
-# tinyfota's services in the table, Find By Type Value, a scan response.
-DFU := -DTB_MATTER_DFU=1 -DTB_FIND_BY_TYPE=1 -DTB_SCAN_RSP=1
+# tinyfota's services in the table, Find By Type Value, Service Changed, a
+# scan response.
+DFU := -DTB_MATTER_DFU=1 -DTB_FIND_BY_TYPE=1 -DTB_SERVICE_CHANGED=1 -DTB_SCAN_RSP=1
 
 .PHONY: test asan adapter size clean
 
@@ -76,7 +77,8 @@ ADAPTER_DEFS := -DCONFIG_TINYTALK_VENDOR_ID=0xFFF1 -DCONFIG_TINYTALK_PRODUCT_ID=
 	-DCONFIG_TINYTALK_DISCRIMINATOR=0xF00
 # Then with CONFIG_TINYBLE_TINYFOTA and the SMP UUID in the scan response, as
 # zephyr/CMakeLists.txt builds them.
-ADAPTER_DFU := -DCONFIG_TINYBLE_TINYFOTA=1 -DTB_MATTER_DFU=1 -DTB_FIND_BY_TYPE=1 -DTB_SCAN_RSP=1 \
+ADAPTER_DFU := -DCONFIG_TINYBLE_TINYFOTA=1 -DTB_MATTER_DFU=1 -DTB_FIND_BY_TYPE=1 \
+	-DTB_SERVICE_CHANGED=1 -DTB_SCAN_RSP=1 \
 	-DTB_TINYTALK_SCAN_RSP_UUID128=0x84,0xAA,0x60,0x74,0x52,0x8A,0x8B,0x86,0xD3,0x4C,0xB7,0x1D,0x1D,0xDC,0x53,0x8D
 
 adapter:

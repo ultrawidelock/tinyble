@@ -27,6 +27,14 @@
  * (on Zephyr, a hook, or any thread holding tb_zephyr_lock()). A
  * notification sent from tb_dfu_on_write() goes out ahead of that write's
  * Write Response.
+ *
+ * A client that cached the table before these services were in it finds them
+ * once tinyble indicates Service Changed for their handles: on the first boot
+ * after the update that added them, the transport calls
+ * tb_service_changed(TB_DFU_H_FIRST, TB_DFU_H_LAST), or
+ * tb_service_changed(0x0001, 0xFFFF) when the old table's layout is unknown,
+ * from tinyble's context, before or after tb_init(). Every peer is then told
+ * when it turns Service Changed indications on, until reset.
  */
 #pragma once
 
@@ -36,8 +44,10 @@
 extern "C" {
 #endif
 
+#define TB_DFU_H_FIRST  0x0012u /* the SMP service declaration */
 #define TB_DFU_H_SMP    0x0014u /* SMP value: the client writes, we notify */
 #define TB_DFU_H_NATIVE 0x0018u /* native DFU value: the client writes, we notify */
+#define TB_DFU_H_LAST   0x0019u /* the native DFU CCC */
 
 /** A Write Request or Write Command to TB_DFU_H_SMP or TB_DFU_H_NATIVE.
  *  Return 0 or an ATT error code (a command's is dropped); @p data is valid
