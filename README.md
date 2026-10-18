@@ -93,7 +93,7 @@ tinytalk's build has off, so that fragment (and `samples/m2`) turns them off: `B
 `BT_CTLR_FILTER_ACCEPT_LIST`, `BT_CTLR_CONN_RSSI`, `BT_HCI_VS` (3,000 B, no
 LTO). It also turns on controller-to-host ACL flow control, which tinyble
 never enables: `BT_HCI_ACL_FLOW_CONTROL=n`, with the SDC driver logging at
-warning level as in tinytalk's build, saves 584 B flash and 184 B RAM (LTO). tinylock 7276ee4 with tinytalk
+warning level as in tinytalk's build, saves 584 B flash and 184 B RAM (LTO). tinylock 73c8a3b with tinytalk
 9604083 and tinyble d70980c, LTO, measured 2026-10-17 on
 `decawave_dwm3001cdk`, each stack fragment as committed (the Zephyr-host one
 keeps LE Ping on):
@@ -151,7 +151,7 @@ default) puts one 128-bit service UUID in the scan response whenever the
 adapter advertises, through `tb_scan_rsp()`.
 
 Door-lock with `stacks/tinyble.conf`, `stacks/tinygrid.conf` and
-`stacks/tinypsa.conf`, the three hooks as empty stubs: tinylock b33f550,
+`stacks/tinypsa.conf`, the three hooks as empty stubs: tinylock fb0f30f,
 tinytalk 4e14cfc, tinygrid b8e3b4a, tinypsa d556143, tinyble 708c112, LTO,
 measured 2026-10-17 on `decawave_dwm3001cdk`:
 

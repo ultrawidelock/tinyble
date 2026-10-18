@@ -363,7 +363,7 @@ driver log at warning level, 79,808 B and 15,976 B.
 
 Since 2026-10-17 the door-lock is tinylock's (`door-lock/`, BLE from
 `stacks/tinyble.conf`) and `samples/door-lock` is gone from this repo.
-tinylock 7276ee4 with tinytalk 9604083 and tinyble d70980c, LTO: 273,204 B
+tinylock 73c8a3b with tinytalk 9604083 and tinyble d70980c, LTO: 273,204 B
 flash and 87,448 B RAM; with `stacks/bt-host.conf` instead, 298,544 B and
 97,248 B (measured 2026-10-17, `decawave_dwm3001cdk`). The rest of this
 section is the former copy.
