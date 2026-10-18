@@ -6,8 +6,10 @@ if(CONFIG_TINYBLE)
   zephyr_library_sources(../src/tinyble.c ../port/zephyr/tb_port_zephyr.c)
   zephyr_library_sources_ifdef(CONFIG_TINYBLE_MATTER_GATT ../src/tb_matter_gatt.c)
   zephyr_library_sources_ifdef(CONFIG_TINYBLE_TINYTALK ../port/tinytalk/matter_ble_tinyble.c)
-  # tinyfota's services in the table, and Find By Type Value to find them.
-  zephyr_library_compile_definitions_ifdef(CONFIG_TINYBLE_TINYFOTA TB_MATTER_DFU=1 TB_FIND_BY_TYPE=1)
+  # tinyfota's services in the table, Find By Type Value to find them, and
+  # Service Changed to tell cached clients about them.
+  zephyr_library_compile_definitions_ifdef(CONFIG_TINYBLE_TINYFOTA TB_MATTER_DFU=1 TB_FIND_BY_TYPE=1
+                                           TB_SERVICE_CHANGED=1)
   # The adapter's scan response UUID as 16 bytes, least significant first.
   if(CONFIG_TINYBLE_TINYTALK AND NOT "${CONFIG_TINYBLE_TINYTALK_SCAN_RSP_UUID128}" STREQUAL "")
     string(REPLACE "-" "" tb_uuid "${CONFIG_TINYBLE_TINYTALK_SCAN_RSP_UUID128}")

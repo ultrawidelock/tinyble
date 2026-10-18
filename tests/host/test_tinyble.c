@@ -1215,6 +1215,100 @@ static void test_dfu(void)
 }
 #endif
 
+#if TB_SERVICE_CHANGED
+/* tb_service_changed(): indicated once the peer turns Service Changed on, on
+ * every link while set, ahead of the application's indication. */
+static void test_service_changed(void)
+{
+	g_inds = 0;
+	tb_service_changed(0x0012, 0x0019); /* before tb_init(): survives it */
+	ready_link();
+
+	/* Nothing until its CCC is on; then after the Write Response. The
+	 * application's indication waits for the confirmation. */
+	EXPECT_NONE();
+	ATT_IN("12 0400 0200");
+	ATT_OUT("13");
+	ATT_OUT("1d 0300 1200 1900");
+	CHECK(tb_indicate(TB_MATTER_H_C2, k_hs, 3) == 0);
+	EXPECT_NONE();
+	ATT_IN("1e");
+	CHECK(g_inds == 0);
+	ATT_OUT("1d 1000 656c04");
+	ATT_IN("1e");
+	CHECK(g_inds == 1 && g_ind_err == 0);
+	EXPECT_NONE();
+
+	/* The next link: the CCC starts off, a Write Command counts, and a new
+	 * range on a link that has it on goes out at once. */
+	rx(TB_HCI_EVT, "0504 00 0100 13");
+	connect();
+	ATT_IN("52 0400 02");
+	ATT_OUT("1d 0300 1200 1900");
+	ATT_IN("1e");
+	tb_service_changed(0x0001, 0xFFFF);
+	ATT_OUT("1d 0300 0100 ffff");
+	ATT_IN("1e");
+	EXPECT_NONE();
+
+	/* Turned off while owed, before the controller takes it: dropped. */
+	g_auto_nocp = 0;
+	rx(TB_HCI_EVT, "0504 00 0100 13");
+	up(251, 1);
+	connect();
+	ATT_IN("12 0400 0200");
+	ATT_OUT("13");
+	ATT_IN("52 0400 00");
+	nocp(1);
+	EXPECT_NONE();
+	g_auto_nocp = 1;
+
+	/* Application first: ours waits for its confirmation. The link falling
+	 * mid-flight ends ours and fails the application's. */
+	ATT_IN("02 0502");
+	ATT_OUT("03 f700");
+	ATT_IN("12 1100 0200");
+	ATT_OUT("13");
+	CHECK(tb_indicate(TB_MATTER_H_C2, k_hs, 3) == 0);
+	ATT_OUT("1d 1000 656c04");
+	ATT_IN("52 0400 02");
+	EXPECT_NONE();
+	ATT_IN("1e");
+	CHECK(g_inds == 2);
+	ATT_OUT("1d 0300 0100 ffff");
+	CHECK(tb_indicate(TB_MATTER_H_C2, k_hs, 3) == 0);
+	rx(TB_HCI_EVT, "0504 00 0100 08");
+	CHECK(g_inds == 3 && g_ind_err == TB_ECONNRESET);
+
+#if TB_ATT_TIMEOUT
+	/* Ours times out like any indication: the link drops, and the
+	 * application's owed one fails with the bearer, unsent. */
+	connect();
+	ATT_IN("52 0400 02");
+	ATT_OUT("1d 0300 0100 ffff");
+	ATT_IN("12 1100 0200");
+	ATT_OUT("13");
+	CHECK(tb_indicate(TB_MATTER_H_C2, k_hs, 3) == 0);
+	g_now += 30000;
+	(void)tb_poll();
+	CHECK(g_inds == 4 && g_ind_err == TB_ETIMEDOUT);
+	EXPECT(TB_HCI_CMD, "060403 0100 13");
+	SIG_OUT("12 01 0800 0c00 1800 0000 c800"); /* came due meanwhile */
+	EXPECT_NONE();
+	rx(TB_HCI_EVT, "0504 00 0100 16");
+	CHECK(g_inds == 4);
+	g_now = 1000;
+#endif
+
+	/* Cleared: the next link hears nothing. */
+	tb_service_changed(0, 0);
+	connect();
+	ATT_IN("12 0400 0200");
+	ATT_OUT("13");
+	EXPECT_NONE();
+}
+#endif
+
 /* Random ACL and events: no crash, no oversized or malformed packet out. */
 static void test_random(void)
 {
@@ -1295,6 +1389,9 @@ int main(void)
 	test_l2cap_smp();
 	test_acl_drops();
 	test_disconnects();
+#if TB_SERVICE_CHANGED
+	test_service_changed();
+#endif
 	test_small_controller();
 	test_random();
 	printf("%s: %d passed, %d failed\n", g_fail ? "FAIL" : "PASS", g_pass, g_fail);

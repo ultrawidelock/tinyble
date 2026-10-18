@@ -47,6 +47,9 @@ extern "C" {
 #ifndef TB_SCAN_RSP
 #define TB_SCAN_RSP 0 /* tb_scan_rsp(); off: no scan response data, not built */
 #endif
+#ifndef TB_SERVICE_CHANGED
+#define TB_SERVICE_CHANGED 0 /* tb_service_changed(); off: not built */
+#endif
 
 /* Error returns. The values are Zephyr's errno numbers, so a Zephyr adapter
  * can pass them through. */
@@ -123,6 +126,17 @@ void tb_adv(const uint8_t *ad, uint8_t len);
 void tb_scan_rsp(const uint8_t *sd, uint8_t len);
 
 /**
+ * Tell clients that cached the table that handles @p start to @p end changed
+ * (TB_SERVICE_CHANGED). Every peer is indicated the range when it turns
+ * Service Changed indications on, at once if it has them on already; a zero
+ * @p start clears it. An indication of the application's asked for meanwhile is accepted and
+ * goes out after the confirmation. The range survives tb_init(), so it can be
+ * set before it, and lasts until reset: set it on the first boot after an
+ * update, for the handles that image added or moved.
+ */
+void tb_service_changed(uint16_t start, uint16_t end);
+
+/**
  * Indicate @p len bytes on characteristic value @p handle. @p data is borrowed
  * until tb_on_indicated() fires, which happens exactly once after a zero
  * return.
@@ -174,8 +188,9 @@ uint8_t tb_on_write(uint16_t handle, const uint8_t *data, uint16_t len);
  *  after the Write Response is handed to the controller, so an indication
  *  sent from here cannot overtake it. */
 void tb_on_ccc(uint16_t handle, uint16_t value);
-/** The outstanding indication was confirmed (0), timed out (TB_ATT_TIMEOUT),
- *  or the link fell. */
+/** The outstanding indication was confirmed (0), timed out (TB_ATT_TIMEOUT;
+ *  one owed behind Service Changed fails with its timeout too), or the link
+ *  fell. */
 void tb_on_indicated(int err);
 /** The link went down with HCI reason @p reason. */
 void tb_on_disconnect(uint8_t reason);

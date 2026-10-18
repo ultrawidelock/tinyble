@@ -14,8 +14,10 @@ config TINYBLE_TINYFOTA
 	depends on TINYBLE_MATTER_GATT
 	help
 	  SMP and tinyfota's native DFU service after the Matter services, at
-	  the handles in include/tinyble/tb_dfu.h, and Find By Type Value,
-	  which clients send to find a service by its UUID. With
+	  the handles in include/tinyble/tb_dfu.h, Find By Type Value, which
+	  clients send to find a service by its UUID, and tb_service_changed(),
+	  for the transport to call on the first boot after an update so that
+	  clients holding the old table learn of the new handles. With
 	  TINYBLE_TINYTALK the adapter hands their writes, their CCC writes
 	  and every disconnect to tb_dfu_on_write(), tb_dfu_on_ccc() and
 	  tb_dfu_on_disconnect(), which the DFU transport provides.

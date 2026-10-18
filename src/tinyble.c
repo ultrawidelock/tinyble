@@ -70,6 +70,11 @@ uint8_t tb_rx_dropped;
  * the outbound one being split into the controller's ACL length. */
 static uint8_t rx_pdu[4u + MTU_MAX], tx_pdu[4u + MTU_MAX];
 
+#if TB_SERVICE_CHANGED
+/* tb_service_changed()'s range, little endian; survives tb_init(). */
+static uint8_t sc_range[4];
+#endif
+
 /* Bytes first, then halfwords, then words: Thumb's short loads reach offsets
  * 0 to 31, 62 and 124 B respectively. */
 static struct {
@@ -89,6 +94,9 @@ static struct {
 	uint8_t rej_ident;
 #endif
 	uint8_t ind;           /* indication: 1 owed, 2 awaiting confirmation */
+#if TB_SERVICE_CHANGED
+	uint8_t sc;            /* the Service Changed one, likewise */
+#endif
 	uint8_t disc_reason;
 	uint16_t conn;
 	uint16_t cmds;         /* C_* bits */
@@ -101,6 +109,9 @@ static struct {
 	uint16_t ccc_h;        /* value handle whose CCC this reply's write changed */
 	uint16_t ccc_v;
 	uint16_t ind_h, ind_len;
+#if TB_SERVICE_CHANGED
+	uint16_t sc_h;         /* Service Changed value while the peer has it on */
+#endif
 	const uint8_t *adv;
 #if TB_SCAN_RSP
 	const uint8_t *sd;
@@ -295,6 +306,10 @@ static void link_down(uint8_t reason)
 	/* The controller frees a dead link's buffers without telling us. */
 	s.credits = s.credits_max;
 	s.cmds = (uint16_t)((s.cmds & ~BIT(C_DISC)) | BIT(C_ADV_EN));
+#if TB_SERVICE_CHANGED
+	s.sc = 0;
+	s.sc_h = 0;
+#endif
 	if (s.ind) {
 		s.ind = 0;
 		tb_on_indicated(TB_ECONNRESET);
@@ -389,6 +404,39 @@ static const uint8_t *uuid128(uint16_t h)
 	return tb_vals + attr(h - 1u)->off + 3;
 }
 
+#if TB_SERVICE_CHANGED
+/* Owe the Service Changed indication while a range is set and the peer has
+ * its indications on; one in flight finishes first. */
+static void sc_arm(void)
+{
+	if (s.sc != 2u) {
+		s.sc = (uint8_t)(s.sc_h && (sc_range[0] | sc_range[1]) ? 1u : 0u);
+	}
+}
+#endif
+
+/* An indication is owed and none awaits its confirmation. */
+static int ind_owed(void)
+{
+#if TB_SERVICE_CHANGED
+	return (s.ind == 1u || s.sc == 1u) && s.ind != 2u && s.sc != 2u;
+#else
+	return s.ind == 1u;
+#endif
+}
+
+#if TB_ATT_TIMEOUT
+/* One awaits its confirmation. */
+static int ind_out(void)
+{
+#if TB_SERVICE_CHANGED
+	return s.ind == 2u || s.sc == 2u;
+#else
+	return s.ind == 2u;
+#endif
+}
+#endif
+
 static uint8_t write_attr(uint16_t h, const uint8_t *v, uint16_t n, int req)
 {
 	const struct tb_attr *a;
@@ -404,6 +452,12 @@ static uint8_t write_attr(uint16_t h, const uint8_t *v, uint16_t n, int req)
 		}
 		val = n == 1u ? v[0] : get16(v);
 		s.ccc[a->fl & TB_A_LEN][0] = (uint8_t)(val & 3u);
+#if TB_SERVICE_CHANGED
+		if (attr((uint16_t)(h - 1u))->type == 0x2A05u) {
+			s.sc_h = (val & 2u) ? (uint16_t)(h - 1u) : 0u;
+			sc_arm();
+		}
+#endif
 		if (req) {
 			s.ccc_h = (uint16_t)(h - 1u);
 			s.ccc_v = val;
@@ -447,6 +501,11 @@ static void att(const uint8_t *p, uint16_t n)
 		return;
 	}
 	if (op == 0x1Eu) { /* Handle Value Confirmation */
+#if TB_SERVICE_CHANGED
+		if (s.sc == 2u) {
+			s.sc = 0;
+		} else
+#endif
 		if (s.ind == 2u) {
 			s.ind = 0;
 			tb_on_indicated(0);
@@ -730,7 +789,7 @@ static void pump(void)
 	cmd();
 	while (s.credits && s.conn != NO_CONN) {
 		if (s.tx_off == s.tx_len) {
-			owed = (uint8_t)(s.pdus | (s.ind == 1u ? BIT(P_IND) : 0u));
+			owed = (uint8_t)(s.pdus | (ind_owed() ? BIT(P_IND) : 0u));
 			if ((owed & BIT(P_CPUR)) && (int32_t)(tb_port_ms() - s.cpur_at) < 0) {
 				owed &= (uint8_t)~BIT(P_CPUR);
 			}
@@ -775,12 +834,22 @@ static void pump(void)
 				put16(q + 10, CONN_TO);
 				n = 12;
 				break;
-			default: /* P_IND */
+			default: /* P_IND: Service Changed first */
 				q[0] = 0x1D;
-				put16(q + 1, s.ind_h);
-				memcpy(q + 3, s.ind_data, s.ind_len);
-				n = (uint16_t)(3u + s.ind_len);
-				s.ind = 2;
+#if TB_SERVICE_CHANGED
+				if (s.sc == 1u) {
+					put16(q + 1, s.sc_h);
+					memcpy(q + 3, sc_range, 4);
+					n = 7;
+					s.sc = 2;
+				} else
+#endif
+				{
+					put16(q + 1, s.ind_h);
+					memcpy(q + 3, s.ind_data, s.ind_len);
+					n = (uint16_t)(3u + s.ind_len);
+					s.ind = 2;
+				}
 #if TB_ATT_TIMEOUT
 				s.ind_at = tb_port_ms() + ATT_TIMEOUT_MS;
 #endif
@@ -853,13 +922,18 @@ uint32_t tb_poll(void)
 	enter();
 	now = tb_port_ms();
 #if TB_ATT_TIMEOUT
-	if (s.ind == 2u) {
+	if (ind_out()) {
 		d = s.ind_at - now;
 		if ((int32_t)d <= 0) {
 			/* No further ATT on this bearer (Core Vol 3 Part F 3.3.3):
 			 * drop the link. */
-			s.ind = 0;
-			tb_on_indicated(TB_ETIMEDOUT);
+#if TB_SERVICE_CHANGED
+			s.sc = 0;
+#endif
+			if (s.ind) { /* in flight, or owed behind Service Changed */
+				s.ind = 0;
+				tb_on_indicated(TB_ETIMEDOUT);
+			}
 			tb_disconnect(0x13);
 		} else {
 			next = d;
@@ -892,6 +966,17 @@ void tb_scan_rsp(const uint8_t *sd, uint8_t len)
 	s.sd = sd;
 	s.sd_len = len > 31u ? 31u : len;
 	s.cmds |= BIT(C_SCAN_RSP);
+	leave();
+}
+#endif
+
+#if TB_SERVICE_CHANGED
+void tb_service_changed(uint16_t start, uint16_t end)
+{
+	enter();
+	put16(sc_range, start);
+	put16(sc_range + 2, end);
+	sc_arm();
 	leave();
 }
 #endif
