@@ -257,3 +257,7 @@ to the iPhone.
   kept the Matter-only table across the update sees the DFU services only
   once it discovers again. `tb_notify()` has no completion hook: the
   transport retries `TB_EBUSY` on its own timer.
+
+## License
+
+Apache-2.0, see LICENSE and NOTICE.
