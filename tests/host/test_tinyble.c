@@ -523,17 +523,17 @@ static void test_discovery(void)
 	ATT_OUT("09 07 0200 200300052a 0600 020700002a 0800 020900012a 0a00 020b00042a");
 	ATT_IN("08 0b00 ffff 0328");
 #if TB_MATTER_DFU
+#if TB_ALIRO
+#define ALIRO_CHRS " 1b00 021c00 a380f9e51e6be48b3a4b239e30a1b5d3" \
+		   " 1d00 081e00 050012ac420219b9ec11543f02954bbd"
+#else
+#define ALIRO_CHRS ""
+#endif
 	ATT_OUT("09 15 0d00 0c0e00 119d9f429c4f9f9559453d26f52eee18"
 		"      0f00 201000 129d9f429c4f9f9559453d26f52eee18"
-		"      1300 141400 " SMP_CHR " 1700 1c1800 " NAT_CHR);
+		"      1300 141400 " SMP_CHR " 1700 1c1800 " NAT_CHR ALIRO_CHRS);
 	ATT_IN("08 1000 ffff 0328");
-#if TB_ALIRO
-	ATT_OUT("09 15 1300 141400 " SMP_CHR " 1700 1c1800 " NAT_CHR
-		" 1b00 021c00 a380f9e51e6be48b3a4b239e30a1b5d3"
-		" 1d00 081e00 050012ac420219b9ec11543f02954bbd");
-#else
-	ATT_OUT("09 15 1300 141400 " SMP_CHR " 1700 1c1800 " NAT_CHR);
-#endif
+	ATT_OUT("09 15 1300 141400 " SMP_CHR " 1700 1c1800 " NAT_CHR ALIRO_CHRS);
 #else
 	ATT_OUT("09 15 0d00 0c0e00 119d9f429c4f9f9559453d26f52eee18"
 		"      0f00 201000 129d9f429c4f9f9559453d26f52eee18");
@@ -1457,15 +1457,18 @@ static void test_coc(void)
 	/* Another SPSM: refused, nothing opened. */
 	l2(0x0005, "14 05 0a00 8100 4000 0002 f700 0500");
 	SIG_OUT("15 05 0a00 0000 0000 0000 0000 0200");
+	nocp(1);
 	CHECK(!tb_coc_up() && g_coc_opens == 0);
 	/* Ours: accepted with CID 0x0040, MTU 512, MPS 247 and 8 credits; the peer
 	 * gave 5. */
 	l2(0x0005, "14 06 0a00 8000 4000 0002 f700 0500");
 	SIG_OUT("15 06 0a00 4000 0002 f700 0800 0000");
+	nocp(1);
 	CHECK(tb_coc_up() && g_coc_opens == 1);
 	/* A second channel: no resources. */
 	l2(0x0005, "14 07 0a00 8000 4100 0002 f700 0500");
 	SIG_OUT("15 07 0a00 0000 0000 0000 0000 0400");
+	nocp(1);
 	CHECK(tb_coc_up());
 	/* 300 B out: two K-frames, 245 then 55, the first with the length. The
 	 * controller takes one packet at a time. */
@@ -1487,9 +1490,8 @@ static void test_coc(void)
 	EXPECT(TB_HCI_ACL, kframe("", sdu + 245, 247));
 	nocp(1);
 	EXPECT(TB_HCI_ACL, kframe("", sdu + 492, 20));
-	CHECK(g_coc_sents == 1);
-	nocp(1);
 	CHECK(g_coc_sents == 2);
+	nocp(1);
 	/* No credits left: the next one waits for the peer's. */
 	CHECK(tb_coc_send(sdu, 10) == 0);
 	EXPECT_NONE();

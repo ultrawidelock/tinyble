@@ -69,6 +69,11 @@ enum { C_EVT_MASK, C_LE_EVT_MASK, C_LE_BUF, C_RAND_ADDR, C_ADV_PARAMS, C_ADV_DAT
 /* ACL PDUs owed, sent lowest bit first while the controller has buffers. The
  * channel's four come last: its data behind everything else. */
 enum { P_ATT, P_SMP, P_REJ, P_CPUR, P_IND, P_COC_RSP, P_COC_CRED, P_COC_DISC, P_COC_DATA };
+#if TB_COC
+typedef uint16_t pdus_t;
+#else
+typedef uint8_t pdus_t;
+#endif
 
 #define BIT(n) (1u << (n))
 
@@ -87,6 +92,7 @@ static uint8_t sc_range[4];
  * 0 to 31, 62 and 124 B respectively. */
 static struct {
 	uint8_t op, err, ulen; /* the ATT reply owed: its request, parsed */
+	pdus_t pdus;           /* P_* bits; P_IND lives in ind */
 	uint8_t ncmd;          /* the controller takes a command */
 	uint8_t credits, credits_max;
 	uint8_t state;         /* 0 starting, 1 up, 2 failed */
@@ -112,7 +118,6 @@ static struct {
 	uint8_t coc_sent;      /* tb_on_coc_sent() owed once the last K-frame is out */
 #endif
 	uint16_t conn;
-	uint16_t pdus;         /* P_* bits; P_IND lives in ind */
 	uint16_t cmds;         /* C_* bits */
 	uint16_t mtu;
 	uint16_t acl;          /* controller's ACL length, at most one PDU */
@@ -784,7 +789,7 @@ static void coc_close(void)
 {
 	if (s.coc_cid) {
 		s.coc_cid = 0;
-		s.pdus &= (uint16_t)~(BIT(P_COC_CRED) | BIT(P_COC_DATA));
+		s.pdus &= (pdus_t)~(BIT(P_COC_CRED) | BIT(P_COC_DATA));
 		s.coc_rx_len = 0;
 		s.coc_tx_len = s.coc_tx_off = 0;
 		s.coc_sent = 0;
@@ -966,18 +971,19 @@ drop:
 static void pump(void)
 {
 	uint8_t *b, *q = tx_pdu + 4, k;
-	uint16_t n, cid, owed;
+	uint16_t n, cid;
+	pdus_t owed;
 
 	cmd();
 	while (s.credits && s.conn != NO_CONN) {
 		if (s.tx_off == s.tx_len) {
-			owed = (uint16_t)(s.pdus | (ind_owed() ? BIT(P_IND) : 0u));
+			owed = (pdus_t)(s.pdus | (ind_owed() ? BIT(P_IND) : 0u));
 			if ((owed & BIT(P_CPUR)) && (int32_t)(tb_port_ms() - s.cpur_at) < 0) {
-				owed &= (uint16_t)~BIT(P_CPUR);
+				owed &= (pdus_t)~BIT(P_CPUR);
 			}
 #if TB_COC
 			if (!s.coc_tx_cr) { /* data waits for the peer's credits */
-				owed &= (uint16_t)~BIT(P_COC_DATA);
+				owed &= (pdus_t)~BIT(P_COC_DATA);
 			}
 #endif
 			if (!owed) {
@@ -1109,7 +1115,7 @@ static void pump(void)
 			put16(tx_pdu + 2, cid);
 			s.tx_len = (uint16_t)(n + 4u);
 			s.tx_off = 0;
-			s.pdus &= (uint16_t)~BIT(k);
+			s.pdus &= (pdus_t)~BIT(k);
 #if TB_COC
 			if (k == P_COC_DATA && !s.coc_sent) {
 				s.pdus |= BIT(P_COC_DATA); /* more K-frames to go */
