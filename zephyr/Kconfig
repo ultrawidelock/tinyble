@@ -22,6 +22,21 @@ config TINYBLE_TINYFOTA
 	  and every disconnect to tb_dfu_on_write(), tb_dfu_on_ccc() and
 	  tb_dfu_on_disconnect(), which the DFU transport provides.
 
+config TINYBLE_COC
+	bool "One L2CAP connection-oriented channel (LE credit based flow control)"
+	depends on TINYBLE
+	help
+	  The channel of include/tinyble/tb_coc.h: a peer opens it on SPSM
+	  0x0080, SDUs of up to 512 B pass each way through tb_coc_send() and
+	  tb_on_coc_data(). The credential reader's transaction runs on it.
+
+config TINYBLE_ALIRO
+	bool "The credential reader service 0xFFF2 in the Matter table"
+	depends on TINYBLE_MATTER_GATT
+	help
+	  tb_aliro.h: the service a phone reads the reader's SPSM and protocol
+	  versions from, after the Matter and DFU services.
+
 config TINYBLE_TINYTALK
 	bool "tinytalk's BLE transport (matter_ble.h) on tinyble"
 	depends on TINYBLE_MATTER_GATT && TINYTALK && !TINYTALK_BLE

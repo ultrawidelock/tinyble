@@ -50,6 +50,9 @@ extern "C" {
 #ifndef TB_SERVICE_CHANGED
 #define TB_SERVICE_CHANGED 0 /* tb_service_changed(); off: not built */
 #endif
+#ifndef TB_RSSI
+#define TB_RSSI 0 /* tb_rssi_request() and tb_on_rssi(); off: not built */
+#endif
 
 /* Error returns. The values are Zephyr's errno numbers, so a Zephyr adapter
  * can pass them through. */
@@ -156,6 +159,12 @@ int tb_notify(uint16_t handle, const uint8_t *data, uint16_t len);
 
 /** Current ATT MTU: 23 until the peer exchanges it. */
 uint16_t tb_mtu(void);
+/** The random static address given to tb_init(), 6 B little endian, or NULL. */
+const uint8_t *tb_addr(void);
+/** Ask the controller for the link's RSSI (HCI Read RSSI); tb_on_rssi() gets
+ *  the answer. Nothing happens without a link. */
+void tb_rssi_request(void);
+void tb_on_rssi(int err, int8_t rssi_dbm);
 
 /** Drop the link with HCI reason @p reason (0x13: remote user terminated). */
 void tb_disconnect(uint8_t reason);

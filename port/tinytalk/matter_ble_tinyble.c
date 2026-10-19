@@ -22,6 +22,7 @@
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 
+#include <tinyble/tb_aliro.h>
 #include <tinyble/tb_dfu.h>
 #include <tinyble/tb_matter.h>
 #include <tinyble/tb_tinytalk.h>
@@ -219,6 +220,11 @@ uint8_t tb_on_write(uint16_t handle, const uint8_t *data, uint16_t len)
 #if defined(CONFIG_TINYBLE_TINYFOTA)
 	if (handle == TB_DFU_H_SMP || handle == TB_DFU_H_NATIVE) {
 		return tb_dfu_on_write(handle, data, len);
+	}
+#endif
+#if TB_ALIRO
+	if (handle == TB_ALIRO_H_VER) {
+		return 0; /* the device's selected version: the transaction carries it too */
 	}
 #endif
 	ARG_UNUSED(handle);

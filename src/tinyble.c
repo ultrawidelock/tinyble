@@ -12,6 +12,9 @@
 #include <string.h>
 
 #include <tinyble/tinyble.h>
+#if TB_COC
+#include <tinyble/tb_coc.h>
+#endif
 
 #ifndef TB_ADV_MIN
 #define TB_ADV_MIN 0x00A0u /* 100 ms, in 0.625 ms */
@@ -58,9 +61,14 @@ enum { C_EVT_MASK, C_LE_EVT_MASK, C_LE_BUF, C_RAND_ADDR, C_ADV_PARAMS, C_ADV_DAT
 #if TB_SCAN_RSP
        C_SCAN_RSP, /* ahead of the enable */
 #endif
-       C_ADV_EN, C_DISC };
-/* ACL PDUs owed, sent lowest bit first while the controller has buffers. */
-enum { P_ATT, P_SMP, P_REJ, P_CPUR, P_IND };
+       C_ADV_EN, C_DISC,
+#if TB_RSSI
+       C_RSSI,
+#endif
+};
+/* ACL PDUs owed, sent lowest bit first while the controller has buffers. The
+ * channel's four come last: its data behind everything else. */
+enum { P_ATT, P_SMP, P_REJ, P_CPUR, P_IND, P_COC_RSP, P_COC_CRED, P_COC_DISC, P_COC_DATA };
 
 #define BIT(n) (1u << (n))
 
@@ -79,7 +87,6 @@ static uint8_t sc_range[4];
  * 0 to 31, 62 and 124 B respectively. */
 static struct {
 	uint8_t op, err, ulen; /* the ATT reply owed: its request, parsed */
-	uint8_t pdus;          /* P_* bits; P_IND lives in ind */
 	uint8_t ncmd;          /* the controller takes a command */
 	uint8_t credits, credits_max;
 	uint8_t state;         /* 0 starting, 1 up, 2 failed */
@@ -98,7 +105,14 @@ static struct {
 	uint8_t sc;            /* the Service Changed one, likewise */
 #endif
 	uint8_t disc_reason;
+#if TB_COC
+	uint8_t coc_ident;     /* the connection request's, for its response */
+	uint8_t coc_dident;    /* the disconnection request's */
+	uint8_t coc_used;      /* K-frames taken since the last credits went back */
+	uint8_t coc_sent;      /* tb_on_coc_sent() owed once the last K-frame is out */
+#endif
 	uint16_t conn;
+	uint16_t pdus;         /* P_* bits; P_IND lives in ind */
 	uint16_t cmds;         /* C_* bits */
 	uint16_t mtu;
 	uint16_t acl;          /* controller's ACL length, at most one PDU */
@@ -121,10 +135,22 @@ static struct {
 #if TB_ATT_TIMEOUT
 	uint32_t ind_at;
 #endif
+#if TB_COC
+	uint16_t coc_cid;      /* the peer's CID; 0 while no channel */
+	uint16_t coc_mtu, coc_mps, coc_tx_cr, coc_rx_cr; /* the peer's, and the credits */
+	uint16_t coc_result;   /* the connection response's */
+	uint16_t coc_tx_len, coc_tx_off, coc_rx_len, coc_rx_sdu;
+	uint16_t coc_disc[2];  /* the disconnection request's two CIDs, echoed */
+	const uint8_t *coc_tx;
+#endif
 	uint8_t u[16];         /* type UUID, or the Find By Type Value value */
 	uint8_t addr[7];       /* [6]: an address was given */
 	uint8_t ccc[4][2];     /* per CCC slot, little endian */
 } s;
+
+#if TB_COC
+static uint8_t coc_rx_buf[TB_COC_MTU];
+#endif
 
 /* On a little-endian CPU the compiler turns these memcpy calls into one
  * halfword access each; the byte form costs 72 B more on Cortex-M4. */
@@ -157,6 +183,9 @@ static uint8_t lowest(uint16_t bits)
 }
 
 static void pump(void);
+#if TB_COC
+static void coc_close(void);
+#endif
 
 static void enter(void)
 {
@@ -180,12 +209,20 @@ static const uint16_t k_op[] = {0x0C01u, 0x2001u, 0x2002u, 0x2005u,
 #if TB_SCAN_RSP
 				 0x2009u,
 #endif
-				 0x200Au, 0x0406u};
+				 0x200Au, 0x0406u,
+#if TB_RSSI
+				 0x1405u,
+#endif
+};
 static const uint8_t k_plen[] = {8, 8, 0, 6, 15, 32,
 #if TB_SCAN_RSP
 				 32,
 #endif
-				 1, 3};
+				 1, 3,
+#if TB_RSSI
+				 2,
+#endif
+};
 
 static void cmd(void)
 {
@@ -198,7 +235,11 @@ static void cmd(void)
 		}
 		i = lowest(s.cmds);
 		on = s.adv_len && s.conn == NO_CONN;
-		if ((i == C_ADV_EN && on == s.adv_on) || (i == C_DISC && s.conn == NO_CONN)) {
+		if ((i == C_ADV_EN && on == s.adv_on) || (i == C_DISC && s.conn == NO_CONN)
+#if TB_RSSI
+		    || (i == C_RSSI && s.conn == NO_CONN)
+#endif
+		) {
 			s.cmds &= (uint16_t)~BIT(i);
 			continue;
 		}
@@ -247,6 +288,11 @@ static void cmd(void)
 		put16(p, s.conn);
 		p[2] = s.disc_reason;
 		break;
+#if TB_RSSI
+	case C_RSSI:
+		put16(p, s.conn);
+		break;
+#endif
 	default: /* C_LE_BUF: no parameters */
 		break;
 	}
@@ -263,6 +309,11 @@ static void cmd_complete(uint16_t op, uint8_t status, const uint8_t *ret, uint8_
 		if (op == 0x200Au && status) {
 			s.adv_on = 0;
 		}
+#if TB_RSSI
+		if (op == 0x1405u && rlen >= 3u && get16(ret) == s.conn) {
+			tb_on_rssi(status ? TB_EIO : 0, (int8_t)ret[2]);
+		}
+#endif
 		return;
 	}
 	if (op == 0x2002u && !status && rlen >= 3u) {
@@ -314,6 +365,9 @@ static void link_down(uint8_t reason)
 		s.ind = 0;
 		tb_on_indicated(TB_ECONNRESET);
 	}
+#if TB_COC
+	coc_close();
+#endif
 	tb_on_disconnect(reason);
 }
 
@@ -718,6 +772,125 @@ err:
 	return 5;
 }
 
+#if TB_COC
+/* ---- LE credit based flow control (Core Vol 3 Part A 3.4, 4.22 to 4.24) --
+ *
+ * One connection-oriented channel on SPSM TB_COC_SPSM, local CID TB_COC_CID,
+ * SDUs of up to TB_COC_MTU each way. K-frames are our ACL size inbound (the
+ * MPS we announce) and the peer's MPS outbound; the first of an SDU carries
+ * its length. Every K-frame costs the sender one credit: the peer gets
+ * TB_COC_CREDITS to start and them back, in batches, as SDUs are consumed. */
+static void coc_close(void)
+{
+	if (s.coc_cid) {
+		s.coc_cid = 0;
+		s.pdus &= (uint16_t)~(BIT(P_COC_CRED) | BIT(P_COC_DATA));
+		s.coc_rx_len = 0;
+		s.coc_tx_len = s.coc_tx_off = 0;
+		s.coc_sent = 0;
+		tb_on_coc_close();
+	}
+}
+
+/* A signaling command the channel takes: connection request, credits, a
+ * disconnection request or response. 1 when it was one of those. */
+static int coc_sig(const uint8_t *p, uint16_t n)
+{
+	uint16_t len = get16(p + 2);
+	uint32_t c;
+
+	if (len != n - 4u || !p[1]) { /* identifier 0 is not a request */
+		return 0;
+	}
+	switch (p[0]) {
+	case 0x14: /* LE Credit Based Connection Request: SPSM, SCID, MTU, MPS, credits */
+		if (len != 10u) {
+			return 0;
+		}
+		s.coc_ident = p[1];
+		s.coc_result = 0;
+		if (get16(p + 4) != TB_COC_SPSM) {
+			s.coc_result = 0x0002; /* SPSM not supported */
+		} else if (s.coc_cid || get16(p + 6) < 0x0040u) {
+			s.coc_result = 0x0004; /* no resources available */
+		} else if (get16(p + 8) < MTU_MIN || get16(p + 10) < MTU_MIN) {
+			s.coc_result = 0x000B; /* unacceptable parameters */
+		} else {
+			s.coc_cid = get16(p + 6);
+			s.coc_mtu = get16(p + 8);
+			s.coc_mps = get16(p + 10);
+			s.coc_tx_cr = get16(p + 12);
+			s.coc_rx_cr = TB_COC_CREDITS;
+			s.coc_used = 0;
+			s.coc_rx_len = 0;
+		}
+		s.pdus |= BIT(P_COC_RSP);
+		return 1;
+	case 0x16: /* LE Flow Control Credit: CID, credits */
+		if (len == 4u && s.coc_cid && get16(p + 4) == s.coc_cid) {
+			c = (uint32_t)s.coc_tx_cr + get16(p + 6);
+			s.coc_tx_cr = c > 0xFFFFu ? 0xFFFFu : (uint16_t)c;
+		}
+		return 1;
+	case 0x06: /* Disconnection Request: DCID (ours), SCID (theirs) */
+		if (len != 4u || get16(p + 4) != TB_COC_CID || !s.coc_cid ||
+		    get16(p + 6) != s.coc_cid) {
+			return 0; /* not our channel: rejected like any other command */
+		}
+		s.coc_dident = p[1];
+		s.coc_disc[0] = get16(p + 4);
+		s.coc_disc[1] = get16(p + 6);
+		coc_close();
+		s.pdus |= BIT(P_COC_DISC);
+		return 1;
+	case 0x07: /* Disconnection Response: we never ask, so never expected */
+		return 1;
+	default:
+		return 0;
+	}
+}
+
+/* A K-frame on our CID. */
+static void coc_rx(const uint8_t *p, uint16_t n)
+{
+	if (!s.coc_rx_cr) { /* the peer spent credits it was not given */
+		tb_disconnect(0x13);
+		return;
+	}
+	s.coc_rx_cr--;
+	s.coc_used++;
+	if (!s.coc_rx_len) {
+		if (n < 2u) {
+			goto bad;
+		}
+		s.coc_rx_sdu = get16(p);
+		p += 2;
+		n = (uint16_t)(n - 2u);
+		if (!s.coc_rx_sdu || s.coc_rx_sdu > TB_COC_MTU) {
+			goto bad;
+		}
+	}
+	if (s.coc_rx_len + n > s.coc_rx_sdu) {
+		goto bad;
+	}
+	memcpy(coc_rx_buf + s.coc_rx_len, p, n);
+	s.coc_rx_len = (uint16_t)(s.coc_rx_len + n);
+	if (s.coc_rx_len < s.coc_rx_sdu) {
+		return;
+	}
+	s.coc_rx_len = 0;
+	/* Credits go back ahead of whatever the hook sends in reply. */
+	if (s.coc_used >= TB_COC_CREDITS / 2u) {
+		s.pdus |= BIT(P_COC_CRED);
+	}
+	tb_on_coc_data(coc_rx_buf, s.coc_rx_sdu);
+	return;
+bad:
+	s.coc_rx_len = 0;
+	tb_rx_dropped++;
+}
+#endif /* TB_COC */
+
 /* ---- L2CAP ---------------------------------------------------------------- */
 
 /* A PDU starts with PB 00 or 10 and continues with PB 01; a new start drops
@@ -759,6 +932,11 @@ static void acl(const uint8_t *p, uint16_t n)
 		 * Update Response and a Command Reject (no dynamic channels) and
 		 * rejects every other code as not understood, the LE credit based
 		 * request included. */
+#if TB_COC
+		if (n >= 4u && coc_sig(p, n)) {
+			return;
+		}
+#endif
 #if TB_SIG_REJECT
 		if (n >= 4u && p[1] && get16(p + 2) == n - 4u && p[0] != 0x13u && p[0] != 0x01u) {
 			s.rej_ident = p[1];
@@ -773,6 +951,10 @@ static void acl(const uint8_t *p, uint16_t n)
 			s.pdus |= BIT(P_SMP);
 		}
 #endif
+#if TB_COC
+	} else if (cid == TB_COC_CID && s.coc_cid) {
+		coc_rx(p, n);
+#endif
 	} else {
 		goto drop;
 	}
@@ -783,16 +965,21 @@ drop:
 
 static void pump(void)
 {
-	uint8_t *b, *q = tx_pdu + 4, k, owed;
-	uint16_t n, cid;
+	uint8_t *b, *q = tx_pdu + 4, k;
+	uint16_t n, cid, owed;
 
 	cmd();
 	while (s.credits && s.conn != NO_CONN) {
 		if (s.tx_off == s.tx_len) {
-			owed = (uint8_t)(s.pdus | (ind_owed() ? BIT(P_IND) : 0u));
+			owed = (uint16_t)(s.pdus | (ind_owed() ? BIT(P_IND) : 0u));
 			if ((owed & BIT(P_CPUR)) && (int32_t)(tb_port_ms() - s.cpur_at) < 0) {
-				owed &= (uint8_t)~BIT(P_CPUR);
+				owed &= (uint16_t)~BIT(P_CPUR);
 			}
+#if TB_COC
+			if (!s.coc_tx_cr) { /* data waits for the peer's credits */
+				owed &= (uint16_t)~BIT(P_COC_DATA);
+			}
+#endif
 			if (!owed) {
 				return;
 			}
@@ -834,6 +1021,69 @@ static void pump(void)
 				put16(q + 10, CONN_TO);
 				n = 12;
 				break;
+#if TB_COC
+			case P_COC_RSP: /* LE Credit Based Connection Response */
+				cid = CID_SIG;
+				q[0] = 0x15;
+				q[1] = s.coc_ident;
+				put16(q + 2, 10);
+				put16(q + 4, s.coc_result ? 0u : TB_COC_CID);
+				put16(q + 6, s.coc_result ? 0u : TB_COC_MTU);
+				put16(q + 8, s.coc_result ? 0u : MTU_MAX);
+				put16(q + 10, s.coc_result ? 0u : TB_COC_CREDITS);
+				put16(q + 12, s.coc_result);
+				n = 14;
+				if (!s.coc_result) {
+					tb_on_coc_open(); /* anything it sends follows this */
+				}
+				break;
+			case P_COC_CRED: /* LE Flow Control Credit */
+				cid = CID_SIG;
+				if (!++s.ident) {
+					s.ident = 1;
+				}
+				q[0] = 0x16;
+				q[1] = s.ident;
+				put16(q + 2, 4);
+				put16(q + 4, TB_COC_CID);
+				put16(q + 6, s.coc_used);
+				s.coc_rx_cr = (uint16_t)(s.coc_rx_cr + s.coc_used);
+				s.coc_used = 0;
+				n = 8;
+				break;
+			case P_COC_DISC: /* Disconnection Response */
+				cid = CID_SIG;
+				q[0] = 0x07;
+				q[1] = s.coc_dident;
+				put16(q + 2, 4);
+				put16(q + 4, s.coc_disc[0]);
+				put16(q + 6, s.coc_disc[1]);
+				n = 8;
+				break;
+			case P_COC_DATA: { /* one K-frame */
+				uint16_t room = s.coc_mps < MTU_MAX ? s.coc_mps : MTU_MAX, m;
+
+				cid = s.coc_cid;
+				n = 0;
+				if (!s.coc_tx_off) {
+					put16(q, s.coc_tx_len);
+					n = 2;
+					room = (uint16_t)(room - 2u);
+				}
+				m = (uint16_t)(s.coc_tx_len - s.coc_tx_off);
+				if (m > room) {
+					m = room;
+				}
+				memcpy(q + n, s.coc_tx + s.coc_tx_off, m);
+				n = (uint16_t)(n + m);
+				s.coc_tx_off = (uint16_t)(s.coc_tx_off + m);
+				s.coc_tx_cr--;
+				if (s.coc_tx_off == s.coc_tx_len) {
+					s.coc_sent = 1;
+				}
+				break;
+			}
+#endif
 			default: /* P_IND: Service Changed first */
 				q[0] = 0x1D;
 #if TB_SERVICE_CHANGED
@@ -859,7 +1109,12 @@ static void pump(void)
 			put16(tx_pdu + 2, cid);
 			s.tx_len = (uint16_t)(n + 4u);
 			s.tx_off = 0;
-			s.pdus &= (uint8_t)~BIT(k);
+			s.pdus &= (uint16_t)~BIT(k);
+#if TB_COC
+			if (k == P_COC_DATA && !s.coc_sent) {
+				s.pdus |= BIT(P_COC_DATA); /* more K-frames to go */
+			}
+#endif
 		}
 		b = tb_port_tx_alloc(TB_HCI_ACL, (uint16_t)(4u + s.acl));
 		if (!b) {
@@ -882,6 +1137,12 @@ static void pump(void)
 			s.ccc_h = 0;
 			tb_on_ccc(n, s.ccc_v);
 		}
+#if TB_COC
+		if (s.coc_sent && s.tx_off == s.tx_len) {
+			s.coc_sent = 0;
+			tb_on_coc_sent();
+		}
+#endif
 	}
 }
 
@@ -1051,6 +1312,49 @@ int tb_notify(uint16_t handle, const uint8_t *data, uint16_t len)
 uint16_t tb_mtu(void)
 {
 	return s.mtu;
+}
+
+#if TB_COC
+int tb_coc_up(void)
+{
+	return s.coc_cid != 0u;
+}
+
+int tb_coc_send(const uint8_t *sdu, uint16_t len)
+{
+	if (!s.coc_cid) {
+		return TB_ENOTCONN;
+	}
+	if ((s.pdus & BIT(P_COC_DATA)) || s.coc_sent) {
+		return TB_EBUSY;
+	}
+	if (!len || len > s.coc_mtu || len > TB_COC_MTU) {
+		return TB_EINVAL;
+	}
+	enter();
+	s.coc_tx = sdu;
+	s.coc_tx_len = len;
+	s.coc_tx_off = 0;
+	s.pdus |= BIT(P_COC_DATA);
+	leave();
+	return 0;
+}
+#endif
+
+#if TB_RSSI
+void tb_rssi_request(void)
+{
+	enter();
+	if (s.conn != NO_CONN) {
+		s.cmds |= BIT(C_RSSI);
+	}
+	leave();
+}
+#endif
+
+const uint8_t *tb_addr(void)
+{
+	return s.addr[6] ? s.addr : NULL;
 }
 
 void tb_disconnect(uint8_t reason)

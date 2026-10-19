@@ -7,6 +7,7 @@
  * With TB_MATTER_DFU (CONFIG_TINYBLE_TINYFOTA), tinyfota's SMP and native DFU
  * services follow (tb_dfu.h).
  */
+#include <tinyble/tb_aliro.h>
 #include <tinyble/tinyble.h>
 
 /* The device name, as characters (it sits inside one byte array). */
@@ -15,6 +16,9 @@
 #endif
 #ifndef TB_MATTER_DFU
 #define TB_MATTER_DFU 0
+#endif
+#ifndef TB_ALIRO
+#define TB_ALIRO 0
 #endif
 
 #define LE16(x) (uint8_t)((x) & 0xFFu), (uint8_t)((x) >> 8)
@@ -53,7 +57,11 @@ enum {
 	V_SMP_CHR = V_SMP + 16,
 	V_NAT = V_SMP_CHR + 19,
 	V_NAT_CHR = V_NAT + 16,
-	V_END = TB_MATTER_DFU ? V_NAT_CHR + 19 : V_SMP,
+	V_ALIRO = TB_MATTER_DFU ? V_NAT_CHR + 19 : V_SMP, /* TB_ALIRO from here */
+	V_ALIRO_RD_CHR = V_ALIRO + 2,
+	V_ALIRO_RD = V_ALIRO_RD_CHR + 19,
+	V_ALIRO_WR_CHR = V_ALIRO_RD + 7,
+	V_END = TB_ALIRO ? V_ALIRO_WR_CHR + 19 : V_ALIRO,
 };
 
 _Static_assert(V_END <= 256, "tb_attrs offsets are one byte");
@@ -81,6 +89,17 @@ const uint8_t tb_vals[V_END] = {
 	0xAEu, 0x01u, 0x4Eu, 0xCEu, 0xFBu, 0x28u, 0x78u, 0x2Eu, 0xDAu,
 	NAT128(0x40u),
 	PROP_WRITE | PROP_WRITE_NR | PROP_NOTIFY, LE16(0x0018u), NAT128(0x41u),
+#endif
+#if TB_ALIRO
+	/* The credential reader service 0xFFF2 (tb_aliro.h). Its READ value is
+	 * [SPSM be16][versions length][version be16][features length][features]:
+	 * SPSM 0x0080, one BLE-UWB protocol version 0x0100, no features. */
+	LE16(0xFFF2u),
+	PROP_READ, LE16(TB_ALIRO_H_READ), NAT128(0x30u),
+	0x00u, 0x80u, 0x02u, 0x01u, 0x00u, 0x01u, 0x00u,
+	/* BD4B9502-3F54-11EC-B919-0242AC120005: the version the device selected */
+	PROP_WRITE, LE16(TB_ALIRO_H_VER), 0x05u, 0x00u, 0x12u, 0xACu, 0x42u, 0x02u, 0x19u, 0xB9u,
+	0xECu, 0x11u, 0x54u, 0x3Fu, 0x02u, 0x95u, 0x4Bu, 0xBDu,
 #endif
 };
 
@@ -116,6 +135,13 @@ const struct tb_attr tb_attrs[] = {
 	/* 0x0017 */ CHR(V_NAT_CHR, 19u),
 	/* 0x0018 */ {0u, TB_A_W, 0},
 	/* 0x0019 */ CCC(3u),
+#endif
+#if TB_ALIRO
+	/* TB_ALIRO_H_FIRST */ SVC(V_ALIRO),
+	CHR(V_ALIRO_RD_CHR, 19u),
+	/* TB_ALIRO_H_READ */ {0u, TB_A_R | 7u, V_ALIRO_RD},
+	CHR(V_ALIRO_WR_CHR, 19u),
+	/* TB_ALIRO_H_VER */ {0u, TB_A_W, 0},
 #endif
 };
 

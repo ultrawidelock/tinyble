@@ -32,6 +32,9 @@ FULL := -DTB_FIND_BY_TYPE=1 -DTB_READ_BLOB=1 -DTB_TYPE128=1 -DTB_SIG_REJECT=1 \
 # tinyfota's services in the table, Find By Type Value, Service Changed, a
 # scan response.
 DFU := -DTB_MATTER_DFU=1 -DTB_FIND_BY_TYPE=1 -DTB_SERVICE_CHANGED=1 -DTB_SCAN_RSP=1
+# The credential reader's channel and service on top of that (CONFIG_TINYBLE_COC,
+# CONFIG_TINYBLE_ALIRO).
+COC := $(DFU) -DTB_COC=1 -DTB_ALIRO=1 -DTB_RSSI=1
 
 .PHONY: test asan adapter size clean
 
@@ -47,6 +50,14 @@ $(BUILD)/test_dfu: $(SRCS) $(TESTS) $(HDRS)
 	@mkdir -p $(@D)
 	$(CC) $(CSTD) $(WARN) $(DFU) $(INCS) $(SRCS) $(TESTS) -o $@
 
+$(BUILD)/test_coc: $(SRCS) $(TESTS) $(HDRS)
+	@mkdir -p $(@D)
+	$(CC) $(CSTD) $(WARN) $(COC) $(INCS) $(SRCS) $(TESTS) -o $@
+
+$(BUILD)/test_asan_coc: $(SRCS) $(TESTS) $(HDRS)
+	@mkdir -p $(@D)
+	$(CC) $(CSTD) $(WARN) $(SAN) $(COC) $(INCS) $(SRCS) $(TESTS) -o $@
+
 $(BUILD)/test_asan: $(SRCS) $(TESTS) $(HDRS)
 	@mkdir -p $(@D)
 	$(CC) $(CSTD) $(WARN) $(SAN) $(INCS) $(SRCS) $(TESTS) -o $@
@@ -59,15 +70,17 @@ $(BUILD)/test_asan_dfu: $(SRCS) $(TESTS) $(HDRS)
 	@mkdir -p $(@D)
 	$(CC) $(CSTD) $(WARN) $(SAN) $(DFU) $(INCS) $(SRCS) $(TESTS) -o $@
 
-test: $(BUILD)/test $(BUILD)/test_full $(BUILD)/test_dfu
+test: $(BUILD)/test $(BUILD)/test_full $(BUILD)/test_dfu $(BUILD)/test_coc
 	$(BUILD)/test
 	$(BUILD)/test_full
 	$(BUILD)/test_dfu
+	$(BUILD)/test_coc
 
-asan: $(BUILD)/test_asan $(BUILD)/test_asan_full $(BUILD)/test_asan_dfu
+asan: $(BUILD)/test_asan $(BUILD)/test_asan_full $(BUILD)/test_asan_dfu $(BUILD)/test_asan_coc
 	$(BUILD)/test_asan
 	$(BUILD)/test_asan_full
 	$(BUILD)/test_asan_dfu
+	$(BUILD)/test_asan_coc
 
 # port/tinytalk against tinytalk's BTP codec, Zephyr stubbed:
 # make adapter TINYTALK=<a tinytalk tree>

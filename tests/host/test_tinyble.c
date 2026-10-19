@@ -11,6 +11,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <tinyble/tb_aliro.h>
+#include <tinyble/tb_coc.h>
 #include <tinyble/tb_dfu.h>
 #include <tinyble/tb_matter.h>
 #include <tinyble/tinyble.h>
@@ -178,6 +180,43 @@ void tb_on_disconnect(uint8_t reason)
 	g_discs++;
 	g_order = g_order == 1 ? 2 : 0;
 }
+
+#if TB_COC
+static int g_coc_opens, g_coc_closes, g_coc_sents, g_coc_datas;
+static uint8_t g_coc_rx[TB_COC_MTU];
+static uint16_t g_coc_rx_len;
+
+void tb_on_coc_open(void)
+{
+	g_coc_opens++;
+}
+
+void tb_on_coc_close(void)
+{
+	g_coc_closes++;
+}
+
+void tb_on_coc_data(const uint8_t *sdu, uint16_t len)
+{
+	memcpy(g_coc_rx, sdu, len);
+	g_coc_rx_len = len;
+	g_coc_datas++;
+}
+
+void tb_on_coc_sent(void)
+{
+	g_coc_sents++;
+}
+#endif
+#if TB_RSSI
+static int g_rssi_err, g_rssi;
+
+void tb_on_rssi(int err, int8_t rssi_dbm)
+{
+	g_rssi_err = err;
+	g_rssi = rssi_dbm;
+}
+#endif
 
 /* ---- helpers --------------------------------------------------------------- */
 
@@ -488,7 +527,13 @@ static void test_discovery(void)
 		"      0f00 201000 129d9f429c4f9f9559453d26f52eee18"
 		"      1300 141400 " SMP_CHR " 1700 1c1800 " NAT_CHR);
 	ATT_IN("08 1000 ffff 0328");
+#if TB_ALIRO
+	ATT_OUT("09 15 1300 141400 " SMP_CHR " 1700 1c1800 " NAT_CHR
+		" 1b00 021c00 a380f9e51e6be48b3a4b239e30a1b5d3"
+		" 1d00 081e00 050012ac420219b9ec11543f02954bbd");
+#else
 	ATT_OUT("09 15 1300 141400 " SMP_CHR " 1700 1c1800 " NAT_CHR);
+#endif
 #else
 	ATT_OUT("09 15 0d00 0c0e00 119d9f429c4f9f9559453d26f52eee18"
 		"      0f00 201000 129d9f429c4f9f9559453d26f52eee18");
@@ -714,6 +759,10 @@ static void test_credits(void)
 #if TB_SIG_REJECT
 	nocp(1);
 	SIG_OUT("01 05 0200 0000");
+#endif
+#if TB_COC
+	nocp(1);
+	SIG_OUT("15 05 0a00 4000 0002 f700 0800 0000");
 #endif
 	EXPECT_NONE();
 
@@ -1070,7 +1119,11 @@ static void test_dfu(void)
 	ATT_IN("10 1600 ffff 0028");
 	ATT_OUT("11 14 1600 1900 " NAT_SVC);
 	ATT_IN("10 1a00 ffff 0028");
+#if TB_ALIRO
+	ATT_OUT("11 06 1a00 1e00 f2ff");
+#else
 	ATT_OUT("01 10 1a00 0a");
+#endif
 	ATT_IN("08 1200 1900 0328");
 	ATT_OUT("09 15 1300 141400 " SMP_CHR);
 
@@ -1130,7 +1183,11 @@ static void test_dfu(void)
 	ATT_IN("04 1900 1900");
 	ATT_OUT("05 01 1900 0229");
 	ATT_IN("04 1a00 ffff");
+#if TB_ALIRO
+	ATT_OUT("05 01 1a00 0028 1b00 0328");
+#else
 	ATT_OUT("01 04 1a00 0a");
+#endif
 
 	/* The CCCs: a request's hook fires after its response, a command's at
 	 * once; each CCC holds its own value. */
@@ -1371,6 +1428,143 @@ static void test_random(void)
 	CHECK(1);
 }
 
+#if TB_COC
+/* A K-frame from us on the peer's CID 0x0040: @p pre (hex) then @p n bytes of @p b. */
+static const char *kframe(const char *pre, const uint8_t *b, size_t n)
+{
+	static char hex[1200];
+	size_t m = strlen(pre);
+
+	memcpy(hex, pre, m);
+	tohex(hex + m, b, n);
+	return frame(0x0040, hex);
+}
+
+static void test_coc(void)
+{
+	static uint8_t sdu[TB_COC_MTU];
+	char hex[600];
+
+	for (size_t i = 0; i < sizeof(sdu); i++) {
+		sdu[i] = (uint8_t)(i * 7u);
+	}
+	g_coc_opens = g_coc_closes = g_coc_sents = g_coc_datas = 0;
+	tb_rx_dropped = 0;
+	g_auto_nocp = 0;
+	up(251, 1);
+	connect();
+	CHECK(!tb_coc_up() && tb_coc_send(sdu, 1) == TB_ENOTCONN);
+	/* Another SPSM: refused, nothing opened. */
+	l2(0x0005, "14 05 0a00 8100 4000 0002 f700 0500");
+	SIG_OUT("15 05 0a00 0000 0000 0000 0000 0200");
+	CHECK(!tb_coc_up() && g_coc_opens == 0);
+	/* Ours: accepted with CID 0x0040, MTU 512, MPS 247 and 8 credits; the peer
+	 * gave 5. */
+	l2(0x0005, "14 06 0a00 8000 4000 0002 f700 0500");
+	SIG_OUT("15 06 0a00 4000 0002 f700 0800 0000");
+	CHECK(tb_coc_up() && g_coc_opens == 1);
+	/* A second channel: no resources. */
+	l2(0x0005, "14 07 0a00 8000 4100 0002 f700 0500");
+	SIG_OUT("15 07 0a00 0000 0000 0000 0000 0400");
+	CHECK(tb_coc_up());
+	/* 300 B out: two K-frames, 245 then 55, the first with the length. The
+	 * controller takes one packet at a time. */
+	CHECK(tb_coc_send(sdu, 300) == 0);
+	EXPECT(TB_HCI_ACL, kframe("2c01", sdu, 245));
+	CHECK(tb_coc_send(sdu, 300) == TB_EBUSY);
+	CHECK(g_coc_sents == 0);
+	nocp(1);
+	EXPECT(TB_HCI_ACL, kframe("", sdu + 245, 55));
+	CHECK(g_coc_sents == 1);
+	nocp(1);
+	EXPECT_NONE();
+	/* 512 B, the MTU: 245 + 247 + 20, spending the last three credits. */
+	CHECK(tb_coc_send(sdu, 513) == TB_EINVAL);
+	CHECK(tb_coc_send(sdu, 0) == TB_EINVAL);
+	CHECK(tb_coc_send(sdu, 512) == 0);
+	EXPECT(TB_HCI_ACL, kframe("0002", sdu, 245));
+	nocp(1);
+	EXPECT(TB_HCI_ACL, kframe("", sdu + 245, 247));
+	nocp(1);
+	EXPECT(TB_HCI_ACL, kframe("", sdu + 492, 20));
+	CHECK(g_coc_sents == 1);
+	nocp(1);
+	CHECK(g_coc_sents == 2);
+	/* No credits left: the next one waits for the peer's. */
+	CHECK(tb_coc_send(sdu, 10) == 0);
+	EXPECT_NONE();
+	l2(0x0005, "16 08 0400 4000 0200");
+	EXPECT(TB_HCI_ACL, kframe("0a00", sdu, 10));
+	nocp(1);
+	CHECK(g_coc_sents == 3);
+	/* 250 B in, over two K-frames; two credits used, none handed back yet. */
+	tohex(hex, sdu, 245);
+	memmove(hex + 4, hex, 491);
+	memcpy(hex, "fa00", 4);
+	l2(0x0040, hex);
+	CHECK(g_coc_datas == 0);
+	tohex(hex, sdu + 245, 5);
+	l2(0x0040, hex);
+	CHECK(g_coc_datas == 1 && g_coc_rx_len == 250 && !memcmp(g_coc_rx, sdu, 250));
+	EXPECT_NONE();
+	/* A second SDU makes four: the credits go back, ident 1. */
+	tohex(hex, sdu, 245);
+	memmove(hex + 4, hex, 491);
+	memcpy(hex, "f600", 4);
+	l2(0x0040, hex);
+	tohex(hex, sdu + 245, 1);
+	l2(0x0040, hex);
+	CHECK(g_coc_datas == 2 && g_coc_rx_len == 246);
+	SIG_OUT("16 01 0400 4000 0400");
+	nocp(1);
+	/* An empty SDU is dropped, its credit spent. */
+	l2(0x0040, "0000");
+	CHECK(tb_rx_dropped == 1 && g_coc_datas == 2);
+	/* The peer closes it: the response echoes both CIDs. */
+	l2(0x0005, "06 09 0400 4000 4000");
+	SIG_OUT("07 09 0400 4000 4000");
+	nocp(1);
+	CHECK(!tb_coc_up() && g_coc_closes == 1);
+	CHECK(tb_coc_send(sdu, 1) == TB_ENOTCONN);
+	/* Reopened; the link going down closes it. */
+	l2(0x0005, "14 0a 0a00 8000 4000 0002 f700 0500");
+	SIG_OUT("15 0a 0a00 4000 0002 f700 0800 0000");
+	nocp(1);
+	CHECK(tb_coc_up() && g_coc_opens == 2);
+	rx(TB_HCI_EVT, "0504 00 0100 13");
+	CHECK(!tb_coc_up() && g_coc_closes == 2);
+	EXPECT_NONE();
+	g_auto_nocp = 1;
+}
+#endif
+
+#if TB_ALIRO
+static void test_aliro(void)
+{
+	char hex[40];
+
+	ready_link();
+	snprintf(hex, sizeof(hex), "0a %02x00", (unsigned)TB_ALIRO_H_READ);
+	ATT_IN(hex);
+	ATT_OUT("0b 00800201000100");
+	snprintf(hex, sizeof(hex), "12 %02x00 0100", (unsigned)TB_ALIRO_H_VER);
+	ATT_IN(hex);
+	ATT_OUT("13");
+	snprintf(hex, sizeof(hex), "0a %02x00", (unsigned)TB_ALIRO_H_VER);
+	ATT_IN(hex);
+	snprintf(hex, sizeof(hex), "01 0a %02x00 02", (unsigned)TB_ALIRO_H_VER);
+	ATT_OUT(hex);
+#if TB_RSSI
+	tb_rssi_request();
+	EXPECT(TB_HCI_CMD, "051402 0100");
+	rx(TB_HCI_EVT, "0e07 01 0514 00 0100 c5");
+	CHECK(g_rssi_err == 0 && g_rssi == -59);
+#endif
+	rx(TB_HCI_EVT, "0504 00 0100 13");
+	EXPECT_NONE();
+}
+#endif
+
 int main(void)
 {
 	test_init_and_adv();
@@ -1394,6 +1588,12 @@ int main(void)
 #endif
 	test_small_controller();
 	test_random();
+#if TB_COC
+	test_coc();
+#endif
+#if TB_ALIRO
+	test_aliro();
+#endif
 	printf("%s: %d passed, %d failed\n", g_fail ? "FAIL" : "PASS", g_pass, g_fail);
 	return g_fail ? 1 : 0;
 }
