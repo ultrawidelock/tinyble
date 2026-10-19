@@ -93,10 +93,11 @@ const uint8_t tb_vals[V_END] = {
 #if TB_ALIRO
 	/* The credential reader service 0xFFF2 (tb_aliro.h). Its READ value is
 	 * [SPSM be16][versions length][version be16][features length][features]:
-	 * SPSM 0x0080, one BLE-UWB protocol version 0x0100, no features. */
+	 * SPSM 0x0080, one BLE-UWB protocol version 0x0100, features bit 0
+	 * (time sync procedure 0). */
 	LE16(0xFFF2u),
 	PROP_READ, LE16(TB_ALIRO_H_READ), NAT128(0x30u),
-	0x00u, 0x80u, 0x02u, 0x01u, 0x00u, 0x01u, 0x00u,
+	0x00u, 0x80u, 0x02u, 0x01u, 0x00u, 0x01u, 0x01u,
 	/* BD4B9502-3F54-11EC-B919-0242AC120005: the version the device selected */
 	PROP_WRITE, LE16(TB_ALIRO_H_VER), 0x05u, 0x00u, 0x12u, 0xACu, 0x42u, 0x02u, 0x19u, 0xB9u,
 	0xECu, 0x11u, 0x54u, 0x3Fu, 0x02u, 0x95u, 0x4Bu, 0xBDu,

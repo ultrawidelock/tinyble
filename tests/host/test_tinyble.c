@@ -1548,7 +1548,7 @@ static void test_aliro(void)
 	ready_link();
 	snprintf(hex, sizeof(hex), "0a %02x00", (unsigned)TB_ALIRO_H_READ);
 	ATT_IN(hex);
-	ATT_OUT("0b 00800201000100");
+	ATT_OUT("0b 00800201000101");
 	snprintf(hex, sizeof(hex), "12 %02x00 0100", (unsigned)TB_ALIRO_H_VER);
 	ATT_IN(hex);
 	ATT_OUT("13");

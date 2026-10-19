@@ -12,6 +12,7 @@ if(CONFIG_TINYBLE)
                                            TB_SERVICE_CHANGED=1)
   zephyr_library_compile_definitions_ifdef(CONFIG_TINYBLE_COC TB_COC=1)
   zephyr_library_compile_definitions_ifdef(CONFIG_TINYBLE_ALIRO TB_ALIRO=1)
+  zephyr_library_compile_definitions_ifdef(CONFIG_TINYBLE_RSSI TB_RSSI=1)
   # The adapter's scan response UUID as 16 bytes, least significant first.
   if(CONFIG_TINYBLE_TINYTALK AND NOT "${CONFIG_TINYBLE_TINYTALK_SCAN_RSP_UUID128}" STREQUAL "")
     string(REPLACE "-" "" tb_uuid "${CONFIG_TINYBLE_TINYTALK_SCAN_RSP_UUID128}")
