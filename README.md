@@ -34,3 +34,6 @@ make size ARM_CC=<arm-gcc>   # gate: 5.2 KB flash, 0.7 KB RAM
 ```
 
 Apache-2.0
+
+Unofficial. Not affiliated with, endorsed or certified by any company or
+standards body named here. Trademarks belong to their owners.
