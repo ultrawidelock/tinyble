@@ -4,8 +4,7 @@ A BLE peripheral host for Matter commissioning. It replaces Zephyr's
 Bluetooth host and drives the controller, Zephyr's or Nordic's, unchanged
 through raw HCI. Portable C11.
 
-6.7 KB flash, 2.5 KB RAM, LTO release build. Swapping out Zephyr's host
-shrinks the door lock image by 24.7 KB flash and 9.6 KB RAM.
+6.7 KB flash, 2.5 KB RAM, LTO release build.
 
 ## Why it is small
 
