@@ -4,8 +4,8 @@ A BLE peripheral host for Matter commissioning. It replaces Zephyr's
 Bluetooth host and drives the controller, Zephyr's or Nordic's, unchanged
 through raw HCI. Portable C11.
 
-6,895 B flash, 2,549 B RAM, LTO release build. Swapping out Zephyr's host
-shrinks the door lock image by 25,340 B flash and 9,800 B RAM.
+6.7 KB flash, 2.5 KB RAM, LTO release build. Swapping out Zephyr's host
+shrinks the door lock image by 24.7 KB flash and 9.6 KB RAM.
 
 ## Why it is small
 
@@ -31,7 +31,7 @@ Optional ATT behaviour: the `TB_*` macros in `include/tinyble/tinyble.h`.
 ```sh
 make test                    # host, against a fake controller
 make asan
-make size ARM_CC=<arm-gcc>   # gate: 5,291 B flash, 760 B RAM
+make size ARM_CC=<arm-gcc>   # gate: 5.2 KB flash, 0.7 KB RAM
 ```
 
 Apache-2.0
