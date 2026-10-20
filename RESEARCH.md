@@ -32,7 +32,7 @@ Conventions:
 
 ## 1. Baseline: where the Bluetooth bytes go
 
-Build: tinymatter b7f26a2 exported with `git archive`, `samples/door-lock`,
+Build: tinymatter 236399e exported with `git archive`, `samples/door-lock`,
 board `decawave_dwm3001cdk`, NCS v3.3.0, `measure/no-lto.conf`. The linker
 reports 342,744 B flash and 102,048 B RAM. The same tree with LTO reports
 309,284 B and 101,984 B. Both match the brief. LTO maps name `ltrans` objects,
@@ -254,7 +254,7 @@ Milestones and gates:
 ## Reproduce
 
 ```
-west build -p always -b decawave_dwm3001cdk -d build/dwm-nolto <tinymatter@b7f26a2>/samples/door-lock -- -DEXTRA_CONF_FILE=measure/no-lto.conf
+west build -p always -b decawave_dwm3001cdk -d build/dwm-nolto <tinymatter@236399e>/samples/door-lock -- -DEXTRA_CONF_FILE=measure/no-lto.conf
 west build -p always -b nrf52833dk/nrf52833 -d build/hci-sdcp <NCS>/zephyr/samples/bluetooth/hci_uart -- "-DEXTRA_CONF_FILE=measure/hci-periph.conf;measure/sdc-periph.conf"
 west build -p always -b nrf52833dk/nrf52833 -d build/hci-sdcp-min <NCS>/zephyr/samples/bluetooth/hci_uart -- "-DEXTRA_CONF_FILE=measure/hci-periph.conf;measure/sdc-periph.conf;measure/hci-min-pools.conf"
 west build -p always -b nrf52833dk/nrf52833 -d build/hci-llsw <NCS>/zephyr/samples/bluetooth/hci_uart -- "-DEXTRA_CONF_FILE=measure/hci-periph.conf;measure/ll-sw.conf" -DEXTRA_DTC_OVERLAY_FILE=measure/ll-sw.overlay
@@ -274,7 +274,7 @@ v3.3.0 source or the door-lock build's `.config`; none is from a trace yet.
 | Row 5: L2CAP Connection Parameter Update Request | Zephyr uses HCI LE Connection Update when both sides support the LL procedure (an iPhone does, inferred) and falls back to L2CAP on 0x1A. It reads remote features first | `conn.c:2129-2166`, `:1805-1813`; `hci_core.c:2052-2064` |
 | Row 6: server MTU 247 B | 251 B in this build (`BT_L2CAP_RX_MTU` is `BT_BUF_ACL_RX_SIZE` minus 4 B), inferred | `.config` |
 | Row 18: refuse LE credit based requests with LE_PSM not supported | Without `BT_L2CAP_DYNAMIC_CHANNEL` Zephyr answers them with Command Reject, not understood | `l2cap.c:2305-2388` |
-| `tinymatter/` | Renamed tinytalk (commit 0a22d99) | tinytalk git log |
+| `tinymatter/` | Renamed tinytalk (commit ba6852d) | tinytalk git log |
 | M0 image | Building the door-lock with `trace/monitor.conf` adds 688 B flash and 8,192 B RAM: 309,972 B and 110,176 B (measured) | `build/dwm-m0.log` |
 
 tinyble (README.md) measured 3,119 B flash and 85 B RAM on 2026-10-16 against
@@ -332,7 +332,7 @@ address). Commissioning succeeded on 1M PHY.
 
 Later the same day the 54.2 s idle was found to be a stale `_matterc` SRP
 record on Apple's border router, which Home dialled over Thread first; not a
-BLE fault. Fixed in tinytalk (edd63a5).
+BLE fault. Fixed in tinytalk (74ef5d2).
 
 Still open for M0: the unmodified `build/dwm-m0` image and the 10-run
 success rate.
@@ -363,12 +363,12 @@ driver log at warning level, 79,808 B and 15,976 B.
 
 Since 2026-10-17 the door-lock is tinylock's (`door-lock/`, BLE from
 `stacks/tinyble.conf`) and `samples/door-lock` is gone from this repo.
-tinylock 73c8a3b with tinytalk ad86dea and tinyble d70980c, LTO: 273,204 B
+tinylock 73c8a3b with tinytalk 86139c7 and tinyble d70980c, LTO: 273,204 B
 flash and 87,448 B RAM; with `stacks/bt-host.conf` instead, 298,544 B and
 97,248 B (measured 2026-10-17, `decawave_dwm3001cdk`). The rest of this
 section is the former copy.
 
-`samples/door-lock` (README.md) is tinytalk's door-lock at 614734c with
+`samples/door-lock` (README.md) is tinytalk's door-lock at 08a4023 with
 `CONFIG_TINYTALK_BLE=n` and `port/tinytalk/matter_ble_tinyble.c` providing
 `matter_ble.h`. It builds; Thread attach on the bench is the open half of the
 gate. Compared with tinytalk's own door-lock at the same commit plus
