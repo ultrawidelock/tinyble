@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Aseem Chopra
+# SPDX-License-Identifier: Apache-2.0
+
 """Drain RTT up-buffer <idx> through nrfutil memory reads; writes RdOff back.
 
 JLinkRTTLogger did not find the control block on the DWM3001CDK's J-Link OB.

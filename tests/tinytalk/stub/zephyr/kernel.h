@@ -1,3 +1,4 @@
+/* SPDX-FileCopyrightText: 2026 Aseem Chopra */
 /* SPDX-License-Identifier: Apache-2.0 */
 /* Host stub: the work queue is test_adapter.c's list. */
 #pragma once

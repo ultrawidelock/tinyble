@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2026 Aseem Chopra
+# SPDX-License-Identifier: Apache-2.0
+
 """Attribute flash and RAM bytes in a GNU ld map to (archive, object).
 
 Flash: output sections below 0x20000000, plus the load image of RAM sections

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2026 Aseem Chopra
 # SPDX-License-Identifier: Apache-2.0
 """Convert a Zephyr Bluetooth monitor stream (RTT up-buffer "btmonitor") to
 btsnoop (H4, datalink 1002) for Wireshark, and print one line per packet.
