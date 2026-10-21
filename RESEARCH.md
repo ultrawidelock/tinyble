@@ -353,7 +353,7 @@ and LE Ping off, default 3 TX and 2 RX buffers.
 tinyble then sent LE Write Suggested Default Data Length (251 B, 2,120 us), as
 the Zephyr host does: the SDC sources and headers do not say it starts the
 data length update without one. It no longer does: with L2CAP reassembly
-(09f9327, "M3 build") the controller stays at 27 B. Not yet run on hardware.
+(81cb415, "M3 build") the controller stays at 27 B. Not yet run on hardware.
 
 Later the same day `samples/m2` took the five raw-HCI controller lines from
 "M3 build": 80,756 B flash, RAM unchanged; with flow control off and the
@@ -363,7 +363,7 @@ driver log at warning level, 79,808 B and 15,976 B.
 
 Since 2026-10-17 the door-lock is tinylock's (`door-lock/`, BLE from
 `stacks/tinyble.conf`) and `samples/door-lock` is gone from this repo.
-tinylock 73c8a3b with tinytalk 86139c7 and tinyble d70980c, LTO: 273,204 B
+tinylock 73c8a3b with tinytalk 86139c7 and tinyble afcb1dc, LTO: 273,204 B
 flash and 87,448 B RAM; with `stacks/bt-host.conf` instead, 298,544 B and
 97,248 B (measured 2026-10-17, `decawave_dwm3001cdk`). The rest of this
 section is the former copy.
